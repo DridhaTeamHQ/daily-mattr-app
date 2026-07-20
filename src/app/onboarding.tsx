@@ -13,7 +13,7 @@ import { topicArt } from '@/lib/topicArt';
 import { supabase } from '@/lib/supabase';
 import { getDeviceId } from '@/lib/telemetry';
 import { tick, soft } from '@/lib/haptics';
-import { ONBOARDED_KEY } from '@/lib/onboardingKey';
+import { ONBOARDED_KEY, setOnboardedFlag } from '@/lib/onboardingKey';
 
 const { width: W } = Dimensions.get('window');
 const TILE = (W - 56) / 2;
@@ -48,6 +48,7 @@ export default function Onboarding() {
       // seeding is best-effort; the feed degrades gracefully to editorial ranking
     }
     await AsyncStorage.setItem(ONBOARDED_KEY, '1');
+    setOnboardedFlag(true); // open the layout gate BEFORE navigating
     router.replace('/(tabs)');
   };
 

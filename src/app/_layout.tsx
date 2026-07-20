@@ -19,7 +19,7 @@ import { StoreProvider } from '@/lib/store';
 import { ThemeProvider, useTheme } from '@/lib/theme';
 import { registerPushToken, checkBreaking, addNotificationTapListener } from '@/lib/notifications';
 import { flush } from '@/lib/telemetry';
-import { ONBOARDED_KEY } from '@/lib/onboardingKey';
+import { ONBOARDED_KEY, setOnboardedFlag, subscribeOnboarded } from '@/lib/onboardingKey';
 
 SplashScreen.preventAutoHideAsync();
 
@@ -66,7 +66,13 @@ function ThemedStack() {
   const bootstrapped = useRef(false);
 
   useEffect(() => {
-    AsyncStorage.getItem(ONBOARDED_KEY).then((v) => setOnboarded(v === '1'));
+    AsyncStorage.getItem(ONBOARDED_KEY).then((v) => {
+      const done = v === '1';
+      setOnboardedFlag(done);
+      setOnboarded(done);
+    });
+    // finishing onboarding flips the flag → gate opens immediately
+    return subscribeOnboarded((v) => setOnboarded(v));
   }, []);
 
   // One-time bootstrap after onboarding: push registration + breaking poll.
