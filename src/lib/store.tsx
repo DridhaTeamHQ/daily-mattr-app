@@ -17,6 +17,7 @@ type Store = {
   toggleLiked: (id: string, topic: string) => void;
   isLiked: (id: string) => boolean;
   recordRead: (id: string, topic: string) => void;
+  clearAll: () => void;
   topTopics: string[]; // most-read topics, for "Because you read …"
 };
 
@@ -81,6 +82,12 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
           const rest = h.filter((e) => e.id !== id);
           return [{ id, topic, at: Date.now() }, ...rest].slice(0, 200);
         }),
+      clearAll: () => {
+        setSaved([]);
+        setSavedTopics({});
+        setHistory([]);
+        setLiked([]);
+      },
       topTopics,
     };
   }, [saved, savedTopics, history, liked]);

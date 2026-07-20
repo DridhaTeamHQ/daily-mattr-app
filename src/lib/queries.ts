@@ -112,9 +112,15 @@ export async function fetchArticle(id: string): Promise<Article | null> {
   return data ? mapArticle(data) : null;
 }
 
-// Related stories: same topic, recent, excluding the current article.
+// Related stories: true vector similarity via app_related (embedding cosine).
+// Falls back to same-topic recency if the article has no embedding.
 export async function fetchRelated(a: Article, limit = 6): Promise<Article[]> {
-  const { data, error } = await supabase
+  const { data, error } = await supabase.rpc('app_related', {
+    p_article_id: a.id,
+    p_limit: limit,
+  });
+  if (!error && data?.length) return data.map(mapArticle);
+  const { data: fb, error: e2 } = await supabase
     .from('articles')
     .select(ARTICLE_COLS)
     .in('status', PUBLISHED)
@@ -122,8 +128,52 @@ export async function fetchRelated(a: Article, limit = 6): Promise<Article[]> {
     .neq('id', a.id)
     .order('reviewed_at', { ascending: false, nullsFirst: false })
     .limit(limit);
+  if (e2) throw e2;
+  return (fb ?? []).map(mapArticle);
+}
+
+// Breaking news for the bell screen / notification polling.
+export type BreakingItem = Article & { breakingScore: number; sourceCount: number; detectedAt: string };
+export async function fetchBreaking(limit = 20): Promise<BreakingItem[]> {
+  const { data, error } = await supabase.rpc('app_get_breaking', { p_limit: limit });
+  if (error) throw error;
+  return (data ?? []).map((r: any) => ({
+    ...mapArticle(r),
+    breakingScore: r.breaking_score,
+    sourceCount: r.source_count,
+    detectedAt: r.detected_at,
+  }));
+}
+
+// Keyset pagination for "More stories" — stable under new inserts.
+export async function fetchFeedPage(opts: {
+  before?: string | null;
+  topics?: string[];
+  limit?: number;
+}): Promise<Article[]> {
+  let q = supabase.from('articles').select(ARTICLE_COLS).in('status', PUBLISHED);
+  if (opts.topics?.length) q = q.in('topic', expandTopics(opts.topics));
+  if (opts.before) {
+    q = q.or(`reviewed_at.lt.${opts.before},and(reviewed_at.is.null,scraped_at.lt.${opts.before})`);
+  }
+  const { data, error } = await ordered(q).limit(opts.limit ?? 15);
   if (error) throw error;
   return (data ?? []).map(mapArticle);
+}
+
+// Semantic search via edge function; falls back to ilike when unavailable.
+export async function searchSemantic(qtext: string, limit = 20): Promise<{ results: Article[]; semantic: boolean }> {
+  try {
+    const { data, error } = await supabase.functions.invoke('app-semantic-search', {
+      body: { query: qtext, limit },
+    });
+    if (error) throw error;
+    const rows = (data?.results ?? []) as any[];
+    if (rows.length) return { results: rows.map(mapArticle), semantic: true };
+  } catch {
+    // fall through to keyword search
+  }
+  return { results: await searchArticles(qtext, limit), semantic: false };
 }
 
 export async function fetchByIds(ids: string[]): Promise<Article[]> {

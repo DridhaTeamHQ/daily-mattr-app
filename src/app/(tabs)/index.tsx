@@ -1,7 +1,8 @@
 import React, { useMemo, useState } from 'react';
-import { View, ScrollView, StyleSheet, RefreshControl } from 'react-native';
+import { View, ScrollView, StyleSheet, RefreshControl, NativeSyntheticEvent, NativeScrollEvent } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useInfiniteQuery } from '@tanstack/react-query';
+import { useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Image } from 'expo-image';
 import Animated, { FadeInDown, FadeIn } from 'react-native-reanimated';
@@ -10,7 +11,8 @@ import { useTheme } from '@/lib/theme';
 import { Txt, Overline, IconButton, CategoryTab, SectionHeader, Shimmer } from '@/components/ui';
 import { TopStoryCard, ArticleRow, RecommendCard, TrendingRow } from '@/components/cards';
 import { NAVBAR_CLEARANCE } from '@/components/navbar';
-import { fetchFeed, fetchForYou, fetchTrending, fetchByIds } from '@/lib/queries';
+import { fetchFeed, fetchFeedPage, fetchForYou, fetchTrending, fetchByIds } from '@/lib/queries';
+import { getUnreadBreaking } from '@/lib/notifications';
 import { useStore } from '@/lib/store';
 
 const CHIPS: { label: string; icon?: string; topics?: string[] }[] = [
@@ -35,6 +37,7 @@ function greeting(): string {
 
 export default function Home() {
   const insets = useSafeAreaInsets();
+  const router = useRouter();
   const { c, isDark, toggle } = useTheme();
   const { topTopics, history } = useStore();
   const [chip, setChip] = useState('For You');
@@ -56,6 +59,8 @@ export default function Home() {
     enabled: continueIds.length > 0,
   });
 
+  const unread = useQuery({ queryKey: ['breakingUnread'], queryFn: getUnreadBreaking, staleTime: 120_000 });
+
   const feed = active.topics ? topical.data : chip === 'Trending' ? trending.data : forYou.data;
   const loading = active.topics ? topical.isLoading : chip === 'Trending' ? trending.isLoading : forYou.isLoading;
 
@@ -63,7 +68,29 @@ export default function Home() {
   const carousel = (feed ?? []).slice(1, 8);
   const becauseYou = (forYou.data ?? []).filter((a) => a.sim != null && a.sim > 0.5).slice(3, 11);
   const quickReads = (feed ?? []).slice(8, 14);
-  const more = (feed ?? []).slice(14, 24);
+
+  // Infinite "More stories": keyset pagination, deduped against the ranked feed
+  const morePages = useInfiniteQuery({
+    queryKey: ['morePages', chip],
+    queryFn: ({ pageParam }) => fetchFeedPage({ before: pageParam, topics: active.topics, limit: 15 }),
+    initialPageParam: null as string | null,
+    getNextPageParam: (last) => (last.length ? last[last.length - 1].publishedAt : undefined),
+  });
+  const more = useMemo(() => {
+    const shown = new Set((feed ?? []).slice(0, 14).map((a) => a.id));
+    return (morePages.data?.pages.flat() ?? []).filter((a) => !shown.has(a.id));
+  }, [morePages.data, feed]);
+
+  const onScrollEnd = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;
+    if (
+      contentOffset.y + layoutMeasurement.height > contentSize.height - 900 &&
+      morePages.hasNextPage &&
+      !morePages.isFetchingNextPage
+    ) {
+      morePages.fetchNextPage();
+    }
+  };
 
   const refetchAll = () => {
     forYou.refetch();
@@ -84,6 +111,8 @@ export default function Home() {
       <ScrollView
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{ paddingTop: insets.top + 12, paddingBottom: NAVBAR_CLEARANCE + 16 }}
+        onScroll={onScrollEnd}
+        scrollEventThrottle={120}
         refreshControl={<RefreshControl refreshing={false} tintColor={c.brand} onRefresh={refetchAll} />}
       >
         {/* Top bar: toggle · centered wordmark · bell */}
@@ -94,7 +123,7 @@ export default function Home() {
             style={s.wordmark}
             contentFit="contain"
           />
-          <IconButton name="bell" size={18} badge onPress={() => {}} />
+          <IconButton name="bell" size={18} badge={(unread.data ?? 0) > 0} onPress={() => router.push("/notifications")} />
         </Animated.View>
 
         {/* Compact greeting */}

@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { View, ScrollView, StyleSheet } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useRouter } from 'expo-router';
 import { useQuery } from '@tanstack/react-query';
 import { LinearGradient } from 'expo-linear-gradient';
 import { tick } from '@/lib/haptics';
@@ -25,6 +26,7 @@ const DAY = 86_400_000;
 export default function Profile() {
   const { c, isDark } = useTheme();
   const insets = useSafeAreaInsets();
+  const router = useRouter();
   const { saved, savedTopics, history, topTopics } = useStore();
   const [tab, setTab] = useState<'Saved' | 'History'>('Saved');
 
@@ -90,7 +92,9 @@ export default function Profile() {
               style={s.glowBL}
             />
             <View style={{ alignItems: 'flex-end', paddingHorizontal: 18 }}>
-              <LIcon name="settings" size={19} color="rgba(255,255,255,0.75)" />
+              <Press onPress={() => router.push('/settings')} scaleTo={0.9} style={{ padding: 6 }}>
+                <LIcon name="settings" size={19} color="rgba(255,255,255,0.75)" />
+              </Press>
             </View>
             <Animated.View entering={FadeIn.duration(500)} style={s.headRow}>
               {/* gradient avatar ring */}

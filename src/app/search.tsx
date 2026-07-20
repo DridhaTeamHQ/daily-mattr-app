@@ -9,7 +9,7 @@ import { colors, font, radius, topicOf } from '@/theme';
 import { useTheme } from '@/lib/theme';
 import { Txt, Press, IconButton, LIcon } from '@/components/ui';
 import { ArticleRow } from '@/components/cards';
-import { searchArticles, fetchTrending } from '@/lib/queries';
+import { searchSemantic, fetchTrending } from '@/lib/queries';
 
 const SUGGESTIONS = ['AI', 'Elections', 'Markets', 'Startups', 'Cricket', 'Space', 'EV'];
 
@@ -25,11 +25,12 @@ export default function Search() {
     return () => clearTimeout(t);
   }, [text]);
 
-  const { data, isFetching } = useQuery({
+  const { data: sr, isFetching } = useQuery({
     queryKey: ['search', q],
-    queryFn: () => searchArticles(q),
+    queryFn: () => searchSemantic(q),
     enabled: q.length >= 2,
   });
+  const data = sr?.results;
 
   const trending = useQuery({ queryKey: ['trending'], queryFn: () => fetchTrending(6) });
 

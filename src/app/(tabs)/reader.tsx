@@ -23,7 +23,7 @@ import { fetchReaderFeed } from '@/lib/queries';
 import { type Article, timeAgo, isBreaking } from '@/lib/content';
 import { useStore } from '@/lib/store';
 import { useTheme } from '@/lib/theme';
-import { track, createDwellTimer } from '@/lib/telemetry';
+import { track, createDwellTimer, flush as flushTelemetry } from '@/lib/telemetry';
 import { artFor } from '@/lib/topicArt';
 
 const { width: W } = Dimensions.get('window');
@@ -50,6 +50,26 @@ export default function Reader() {
     queryKey: ['readerFeed'],
     queryFn: () => fetchReaderFeed(40),
   });
+  const [extra, setExtra] = useState<Article[]>([]);
+  const loadingMore = useRef(false);
+  const feedItems = useMemo(() => {
+    const seenIds = new Set((data ?? []).map((a) => a.id));
+    return [...(data ?? []), ...extra.filter((a) => !seenIds.has(a.id))];
+  }, [data, extra]);
+
+  const loadMore = useCallback(async () => {
+    if (loadingMore.current) return;
+    loadingMore.current = true;
+    try {
+      await flushTelemetry(); // impressions raise seen_count so the next batch differs
+      const next = await fetchReaderFeed(40);
+      setExtra((prev) => {
+        const have = new Set([...(data ?? []), ...prev].map((a) => a.id));
+        return [...prev, ...next.filter((a) => !have.has(a.id))];
+      });
+    } catch {}
+    loadingMore.current = false;
+  }, [data]);
 
   const onScroll = useAnimatedScrollHandler((e) => {
     scrollY.value = e.contentOffset.y;
@@ -112,7 +132,7 @@ export default function Reader() {
     <View style={{ flex: 1, backgroundColor: c.bg }} onLayout={(e) => setMeasuredH(e.nativeEvent.layout.height)}>
       {pageH > 0 ? (
         <Animated.FlatList
-          data={data ?? []}
+          data={feedItems}
           keyExtractor={(a: Article) => a.id}
           renderItem={({ item, index }) => (
             <PageShell index={index} pageH={pageH} scrollY={scrollY}>
@@ -129,8 +149,13 @@ export default function Reader() {
           getItemLayout={(_: any, i: number) => ({ length: pageH, offset: pageH * i, index: i })}
           onViewableItemsChanged={onViewable}
           viewabilityConfig={{ itemVisiblePercentThreshold: 75 }}
-          onRefresh={refetch}
+          onRefresh={() => {
+            setExtra([]);
+            refetch();
+          }}
           refreshing={false}
+          onEndReached={loadMore}
+          onEndReachedThreshold={2}
           windowSize={5}
         />
       ) : null}
