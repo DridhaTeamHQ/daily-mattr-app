@@ -15,14 +15,18 @@ import { getDeviceId } from './telemetry';
 const LAST_SEEN_KEY = 'dailymattr.breaking.lastseen.v1';
 const LAST_NOTIFIED_KEY = 'dailymattr.breaking.lastnotified.v1';
 
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowBanner: true,
-    shouldShowList: true,
-    shouldPlaySound: false,
-    shouldSetBadge: false,
-  }),
-});
+try {
+  Notifications.setNotificationHandler({
+    handleNotification: async () => ({
+      shouldShowBanner: true,
+      shouldShowList: true,
+      shouldPlaySound: false,
+      shouldSetBadge: false,
+    }),
+  });
+} catch {
+  // Expo Go strips parts of expo-notifications — never let init take the app down
+}
 
 export async function ensurePermissions(): Promise<boolean> {
   try {

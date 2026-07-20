@@ -1,4 +1,4 @@
-import { Stack, useRouter, useSegments } from 'expo-router';
+import { Stack, Redirect, useRouter, useSegments } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect, useRef, useState } from 'react';
 import { AppState } from 'react-native';
@@ -20,7 +20,7 @@ import { StoreProvider } from '@/lib/store';
 import { ThemeProvider, useTheme } from '@/lib/theme';
 import { registerPushToken, checkBreaking } from '@/lib/notifications';
 import { flush } from '@/lib/telemetry';
-import { ONBOARDED_KEY } from './onboarding';
+import { ONBOARDED_KEY } from '@/lib/onboardingKey';
 
 SplashScreen.preventAutoHideAsync();
 
@@ -70,13 +70,6 @@ function ThemedStack() {
     AsyncStorage.getItem(ONBOARDED_KEY).then((v) => setOnboarded(v === '1'));
   }, []);
 
-  // Route gate: unonboarded users land on /onboarding.
-  useEffect(() => {
-    if (onboarded === false && segments[0] !== 'onboarding') {
-      router.replace('/onboarding');
-    }
-  }, [onboarded, segments, router]);
-
   // One-time bootstrap after onboarding: push registration + breaking poll.
   useEffect(() => {
     if (onboarded !== true || bootstrapped.current) return;
@@ -104,6 +97,8 @@ function ThemedStack() {
   return (
     <>
       <StatusBar style={isDark ? 'light' : 'dark'} />
+      {/* Declarative gate — safe during initial mount, unlike router.replace() */}
+      {onboarded === false && segments[0] !== 'onboarding' ? <Redirect href="/onboarding" /> : null}
       <Stack
         screenOptions={{
           headerShown: false,

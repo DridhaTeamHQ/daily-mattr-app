@@ -13,11 +13,10 @@ import { topicArt } from '@/lib/topicArt';
 import { supabase } from '@/lib/supabase';
 import { getDeviceId } from '@/lib/telemetry';
 import { tick, soft } from '@/lib/haptics';
+import { ONBOARDED_KEY } from '@/lib/onboardingKey';
 
 const { width: W } = Dimensions.get('window');
 const TILE = (W - 56) / 2;
-
-export const ONBOARDED_KEY = 'dailymattr.onboarded.v1';
 
 const TOPICS = [
   'Tech & AI', 'Business', 'Politics', 'India', 'World', 'Sports',
