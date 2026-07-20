@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell($p = \"C:\\\\Users\\\\Tamada\\\\Desktop\\\\dailymattr app\"; Write-Output \"EXISTS: $\\(Test-Path $p\\)\"; $items = Get-ChildItem -LiteralPath $p -Force -Recurse -ErrorAction SilentlyContinue; Write-Output \"ITEM COUNT: $\\($items.Count\\)\"; $items | Select-Object FullName, Length, Mode | Format-Table -AutoSize | Out-String -Width 300)",
+      "Bash(sort -u -t: -k3)",
+      "Read(//c/Users/Tamada/Desktop/shortly apk/**)",
+      "Bash(unzip -l app-arm64-v8a-release.apk)",
+      "Bash(npx expo *)"
+    ]
+  }
+}
