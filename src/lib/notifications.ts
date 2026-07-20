@@ -1,22 +1,21 @@
 import { Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import * as Notifications from 'expo-notifications';
 import * as Device from 'expo-device';
 import { supabase } from './supabase';
 import { fetchBreaking, type BreakingItem } from './queries';
 import { getDeviceId } from './telemetry';
 
 // Breaking-news notifications.
-// - Server cron detects breaking + sends remote push to registered tokens
-//   (works in dev/EAS builds; Expo Go on Android cannot receive remote push).
-// - Client also polls on app-open/foreground and fires a LOCAL notification
-//   for anything new — works everywhere, including Expo Go.
+// expo-notifications THROWS ON IMPORT in Expo Go on Android (removed in
+// SDK 53+), so it must be loaded lazily behind a guard. In Expo Go the app
+// still gets the bell screen + unread badge (pure Supabase); local/remote
+// notifications light up automatically in a real dev/EAS build.
 
-const LAST_SEEN_KEY = 'dailymattr.breaking.lastseen.v1';
-const LAST_NOTIFIED_KEY = 'dailymattr.breaking.lastnotified.v1';
-
+let N: any = null;
 try {
-  Notifications.setNotificationHandler({
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  N = require('expo-notifications');
+  N.setNotificationHandler({
     handleNotification: async () => ({
       shouldShowBanner: true,
       shouldShowList: true,
@@ -25,34 +24,39 @@ try {
     }),
   });
 } catch {
-  // Expo Go strips parts of expo-notifications — never let init take the app down
+  N = null; // Expo Go on Android — notifications unavailable, app runs fine
 }
 
+const LAST_SEEN_KEY = 'dailymattr.breaking.lastseen.v1';
+const LAST_NOTIFIED_KEY = 'dailymattr.breaking.lastnotified.v1';
+
 export async function ensurePermissions(): Promise<boolean> {
+  if (!N) return false;
   try {
-    const settings = await Notifications.getPermissionsAsync();
+    const settings = await N.getPermissionsAsync();
     if (settings.granted) return true;
-    const req = await Notifications.requestPermissionsAsync();
+    const req = await N.requestPermissionsAsync();
     return req.granted;
   } catch {
     return false;
   }
 }
 
-// Register for remote push. Silently no-ops where unsupported (Expo Go).
+// Register for remote push. Silently no-ops where unsupported.
 export async function registerPushToken(): Promise<void> {
+  if (!N) return;
   try {
     if (!Device.isDevice) return;
     const ok = await ensurePermissions();
     if (!ok) return;
     if (Platform.OS === 'android') {
-      await Notifications.setNotificationChannelAsync('breaking', {
+      await N.setNotificationChannelAsync('breaking', {
         name: 'Breaking news',
-        importance: Notifications.AndroidImportance.HIGH,
+        importance: N.AndroidImportance.HIGH,
         sound: 'default',
       });
     }
-    const token = (await Notifications.getExpoPushTokenAsync()).data;
+    const token = (await N.getExpoPushTokenAsync()).data;
     const deviceId = await getDeviceId();
     await supabase.rpc('app_register_push', {
       p_device_id: deviceId,
@@ -60,12 +64,26 @@ export async function registerPushToken(): Promise<void> {
       p_platform: Platform.OS,
     });
   } catch {
-    // Expo Go on Android or missing project id — local notifications still work.
+    // missing project id etc. — remote push simply stays off
+  }
+}
+
+// Notification tap → callback with the articleId. No-op where unsupported.
+export function addNotificationTapListener(cb: (articleId: string) => void): { remove: () => void } {
+  if (!N) return { remove: () => {} };
+  try {
+    const sub = N.addNotificationResponseReceivedListener((resp: any) => {
+      const id = resp?.notification?.request?.content?.data?.articleId;
+      if (id) cb(String(id));
+    });
+    return { remove: () => sub.remove() };
+  } catch {
+    return { remove: () => {} };
   }
 }
 
 // Poll for new breaking stories; fire a local notification for the newest
-// unseen one. Returns the full list for the bell screen.
+// unseen one when the platform allows it. Returns the list for the bell screen.
 export async function checkBreaking(): Promise<{ items: BreakingItem[]; unread: number }> {
   const items = await fetchBreaking(20);
   const lastSeen = Number((await AsyncStorage.getItem(LAST_SEEN_KEY)) ?? 0);
@@ -75,16 +93,14 @@ export async function checkBreaking(): Promise<{ items: BreakingItem[]; unread: 
 
   const fresh = items.filter((b) => new Date(b.detectedAt).getTime() > lastNotified);
   if (fresh.length > 0) {
-    const top = fresh[0];
     await AsyncStorage.setItem(LAST_NOTIFIED_KEY, String(Date.now()));
-    const ok = await ensurePermissions();
-    if (ok) {
+    if (N && (await ensurePermissions())) {
       try {
-        await Notifications.scheduleNotificationAsync({
+        await N.scheduleNotificationAsync({
           content: {
             title: '🔴 Breaking — Daily Mattr',
-            body: top.title,
-            data: { articleId: top.id },
+            body: fresh[0].title,
+            data: { articleId: fresh[0].id },
           },
           trigger: null,
         });

@@ -7,7 +7,6 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { QueryClient } from '@tanstack/react-query';
 import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client';
 import { createAsyncStoragePersister } from '@tanstack/query-async-storage-persister';
-import * as Notifications from 'expo-notifications';
 import { useFonts } from 'expo-font';
 import {
   Inter_400Regular,
@@ -18,7 +17,7 @@ import {
 } from '@expo-google-fonts/inter';
 import { StoreProvider } from '@/lib/store';
 import { ThemeProvider, useTheme } from '@/lib/theme';
-import { registerPushToken, checkBreaking } from '@/lib/notifications';
+import { registerPushToken, checkBreaking, addNotificationTapListener } from '@/lib/notifications';
 import { flush } from '@/lib/telemetry';
 import { ONBOARDED_KEY } from '@/lib/onboardingKey';
 
@@ -83,10 +82,7 @@ function ThemedStack() {
     });
 
     // notification tap → deep link to the article
-    const tapSub = Notifications.addNotificationResponseReceivedListener((resp) => {
-      const id = resp.notification.request.content.data?.articleId;
-      if (id) router.push(`/article/${id}`);
-    });
+    const tapSub = addNotificationTapListener((id) => router.push(`/article/${id}`));
 
     return () => {
       sub.remove();
