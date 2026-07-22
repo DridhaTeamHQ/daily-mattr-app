@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-import { View, Pressable, StyleSheet } from 'react-native';
+import { View, Pressable, StyleSheet, Platform } from 'react-native';
 import { tick } from '@/lib/haptics';
 import { useRouter } from 'expo-router';
 import Animated, {
@@ -11,7 +11,10 @@ import Animated, {
 } from 'react-native-reanimated';
 
 const APressable = Animated.createAnimatedComponent(Pressable);
-const TAB_MORPH = LinearTransition.springify().damping(30).stiffness(260).mass(0.8);
+// web's layout-transition shim strips flexGrow mid-morph and logs a style
+// conflict — the pill morph is native-only
+const TAB_MORPH =
+  Platform.OS === 'web' ? undefined : LinearTransition.springify().damping(30).stiffness(260).mass(0.8);
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, shadow, spring } from '@/theme';
 import { useTheme } from '@/lib/theme';

@@ -9,11 +9,15 @@ import ReanimatedSwipeable from 'react-native-gesture-handler/ReanimatedSwipeabl
 import Animated, {
   FadeInDown,
   FadeIn,
+  FadeOut,
+  LinearTransition,
   useSharedValue,
   useAnimatedStyle,
   withDelay,
   withSpring,
 } from 'react-native-reanimated';
+
+const ROW_COLLAPSE = LinearTransition.springify().damping(30).stiffness(260).mass(0.8);
 import { colors, radius, shadow, spring, topicOf, personalityOf } from '@/theme';
 import { Txt, Press, SectionHeader, LIcon } from '@/components/ui';
 import { ArticleRow } from '@/components/cards';
@@ -61,7 +65,11 @@ export default function Profile() {
     queryKey: ['profileList', tab, ids.join(',')],
     queryFn: () => fetchByIds(ids),
     enabled: ids.length > 0,
+    placeholderData: (prev) => prev,
   });
+
+  // saved rows react to the live store, so a swipe-delete vanishes instantly
+  const rows = tab === 'Saved' ? (data ?? []).filter((a) => saved.includes(a.id)) : data ?? [];
 
   const collections = useMemo(() => {
     const counts: Record<string, number> = {};
@@ -217,11 +225,13 @@ export default function Profile() {
               </Txt>
             </View>
           ) : (
-            (data ?? []).map((a, i) =>
+            rows.map((a, i) =>
               tab === 'Saved' ? (
-                <SwipeToDelete key={a.id} onDelete={() => toggleSaved(a.id, a.topic)}>
-                  <ArticleRow a={a} index={i} />
-                </SwipeToDelete>
+                <Animated.View key={a.id} layout={ROW_COLLAPSE} exiting={FadeOut.duration(200)}>
+                  <SwipeToDelete onDelete={() => toggleSaved(a.id, a.topic)}>
+                    <ArticleRow a={a} index={i} />
+                  </SwipeToDelete>
+                </Animated.View>
               ) : (
                 <ArticleRow key={a.id} a={a} index={i} />
               ),
@@ -238,9 +248,12 @@ export default function Profile() {
 function SwipeToDelete({ children, onDelete }: { children: React.ReactNode; onDelete: () => void }) {
   return (
     <ReanimatedSwipeable
-      friction={1.6}
-      leftThreshold={72}
+      friction={1.3}
+      leftThreshold={56}
       overshootLeft={false}
+      onSwipeableOpenStartDrag={(dir) => {
+        if (dir === 'left') tick();
+      }}
       renderLeftActions={() => (
         <View style={sw.deletePanel}>
           <LIcon name="trash-2" size={20} color="#fff" />
