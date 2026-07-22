@@ -466,10 +466,10 @@ function ReaderCard({ a, height, topInset }: { a: Article; height: number; topIn
         <LinearGradient
           colors={
             isDark
-              ? (['rgba(12,17,29,0)', 'rgba(12,17,29,0.42)', 'rgba(12,17,29,0.62)'] as any)
-              : (['rgba(255,255,255,0)', 'rgba(255,255,255,0.3)', 'rgba(255,255,255,0.46)'] as any)
+              ? (['rgba(12,17,29,0)', 'rgba(12,17,29,0.42)', 'rgba(12,17,29,0.6)', 'rgba(12,17,29,0.68)'] as any)
+              : (['rgba(255,255,255,0)', 'rgba(255,255,255,0.3)', 'rgba(255,255,255,0.5)', 'rgba(255,255,255,0.66)'] as any)
           }
-          locations={[0, 0.14, 0.3]}
+          locations={[0, 0.14, 0.3, 0.52]}
           style={StyleSheet.absoluteFill}
         />
 
