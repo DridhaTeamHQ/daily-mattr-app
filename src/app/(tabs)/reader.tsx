@@ -58,6 +58,11 @@ export default function Reader() {
   const drawer = useSharedValue(0);
   const openDrawer = (open: boolean) => {
     tick();
+    if (open) {
+      // always start from a clean bloom state
+      setRevealTopic(undefined);
+      reveal.value = 0;
+    }
     setDrawerOpen(open);
     drawer.value = withSpring(open ? 1 : 0, spring.snappy);
   };
@@ -69,19 +74,23 @@ export default function Reader() {
   // bubble bloom: tapped bubble expands + fades, revealing the deck
   const reveal = useSharedValue(0);
   const [revealTopic, setRevealTopic] = useState<string | null | undefined>(undefined);
-  const finishReveal = () => {
-    setDrawerOpen(false);
-    drawer.value = 0;
+  const endBloom = () => {
     setRevealTopic(undefined);
     reveal.value = 0;
+    drawer.value = 0;
   };
+  const bloomTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const handleDialSelect = (t: string | null) => {
     soft();
+    setDrawerOpen(false); // stop capturing touches immediately
     setTopicFilter(t);
     setRevealTopic(t);
-    reveal.value = withTiming(1, { duration: 560, easing: Easing.bezier(0.3, 0, 0.2, 1) }, (f) => {
-      if (f) runOnJS(finishReveal)();
-    });
+    reveal.value = 0;
+    reveal.value = withTiming(1, { duration: 560, easing: Easing.bezier(0.3, 0, 0.2, 1) });
+    // drive cleanup from JS — a dropped worklet callback would otherwise leave
+    // reveal pinned at 1 and the dial permanently invisible
+    if (bloomTimer.current) clearTimeout(bloomTimer.current);
+    bloomTimer.current = setTimeout(endBloom, 580);
   };
   const backdropFade = useAnimatedStyle(() => ({ opacity: 1 - reveal.value }));
   const wheelFade = useAnimatedStyle(() => ({ opacity: Math.max(0, 1 - reveal.value * 2.2) }));
@@ -96,6 +105,9 @@ export default function Reader() {
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: ['readerFeed', topicFilter],
     queryFn: () => fetchReaderFeed(40, topicFilter ? [topicFilter] : undefined),
+    // keep the old deck on screen while the new topic loads — otherwise the
+    // loading branch unmounts the dial mid-bloom and the tap looks ignored
+    placeholderData: (prev: Article[] | undefined) => prev,
   });
   const [extra, setExtra] = useState<Article[]>([]);
   const loadingMore = useRef(false);
@@ -104,8 +116,10 @@ export default function Reader() {
     return [...(data ?? []), ...extra.filter((a) => !seenIds.has(a.id))];
   }, [data, extra]);
 
+  const listRef = useRef<any>(null);
   React.useEffect(() => {
     setExtra([]);
+    listRef.current?.scrollToOffset({ offset: 0, animated: false });
   }, [topicFilter]);
 
   const loadMore = useCallback(async () => {
@@ -126,6 +140,18 @@ export default function Reader() {
   const onScroll = useAnimatedScrollHandler((e) => {
     scrollY.value = e.contentOffset.y;
   });
+
+  const topInset = insets.top;
+  const renderPage = useCallback(
+    ({ item, index }: { item: Article; index: number }) => (
+      <PageShell index={index} pageH={pageH} scrollY={scrollY}>
+        <ReaderCardMemo a={item} height={pageH} topInset={topInset} />
+      </PageShell>
+    ),
+    // scrollY is a stable shared value ref
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [pageH, topInset],
+  );
 
   const dwellRef = useRef<{ id: string; topic: string; words: number; timer: ReturnType<typeof createDwellTimer> } | null>(null);
 
@@ -184,14 +210,10 @@ export default function Reader() {
     <View style={{ flex: 1, backgroundColor: c.bg }} onLayout={(e) => setMeasuredH(e.nativeEvent.layout.height)}>
       {pageH > 0 ? (
         <Animated.FlatList
-          key={topicFilter ?? 'foryou'}
+          ref={listRef}
           data={feedItems}
           keyExtractor={(a: Article) => a.id}
-          renderItem={({ item, index }) => (
-            <PageShell index={index} pageH={pageH} scrollY={scrollY}>
-              <ReaderCard a={item} height={pageH} topInset={insets.top} />
-            </PageShell>
-          )}
+          renderItem={renderPage}
           onScroll={onScroll}
           onScrollBeginDrag={() => nav.hide()}
           scrollEventThrottle={16}
@@ -211,6 +233,8 @@ export default function Reader() {
           onEndReached={loadMore}
           onEndReachedThreshold={2}
           windowSize={5}
+          initialNumToRender={3}
+          maxToRenderPerBatch={3}
         />
       ) : null}
 
@@ -235,7 +259,7 @@ export default function Reader() {
         style={[StyleSheet.absoluteFill, dialStyle]}
         pointerEvents={drawerOpen ? 'auto' : 'none'}
       >
-        <Animated.View style={[StyleSheet.absoluteFill, backdropFade]}>
+        <Animated.View style={[StyleSheet.absoluteFill, backdropFade]} pointerEvents={drawerOpen ? 'auto' : 'none'}>
           <Press onPress={() => openDrawer(false)} haptic={false} style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(5,8,14,0.92)' }]}>
             <View />
           </Press>
@@ -308,6 +332,11 @@ function TopicWheel({
     },
   );
 
+  const choose = (i: number, t: string | null) => {
+    scrollRef.current?.scrollTo({ y: i * WHEEL_ROW, animated: false });
+    onSelect(t);
+  };
+
   const pad = Math.max((wheelH - WHEEL_ROW) / 2, 0);
   const startIndex = Math.max(
     WHEEL_ITEMS.findIndex((t) => t === selected),
@@ -333,26 +362,23 @@ function TopicWheel({
         >
           {WHEEL_ITEMS.map((t, i) => (
             <WheelRow key={t ?? 'foryou'} index={i} wheelY={wheelY}>
-              <Press
-                haptic={false}
-                onPress={() => {
-                  scrollRef.current?.scrollTo({ y: i * WHEEL_ROW, animated: false });
-                  onSelect(t);
-                }}
-                scaleTo={0.94}
-                style={{ alignItems: 'center' }}
-              >
-                {t === null ? (
+              {t === null ? (
+                <Press
+                  haptic={false}
+                  onPress={() => choose(i, t)}
+                  scaleTo={0.94}
+                  style={{ alignItems: 'center' }}
+                >
                   <View style={[st.forYouBubble, { backgroundColor: brand }]}>
                     <LIcon name="sparkles" size={22} color="#fff" strokeWidth={2.2} />
                     <Txt size={12.5} weight="bold" color="#fff" style={{ marginTop: 4 }}>
                       For You
                     </Txt>
                   </View>
-                ) : (
-                  <TopicBubble topic={t} size={92} selected={selected === t} />
-                )}
-              </Press>
+                </Press>
+              ) : (
+                <TopicBubble topic={t} size={92} selected={selected === t} onPress={() => choose(i, t)} />
+              )}
             </WheelRow>
           ))}
         </Animated.ScrollView>
@@ -441,6 +467,8 @@ function PageShell({ index, pageH, scrollY, children }: { index: number; pageH: 
   });
   return <Animated.View style={[{ height: pageH }, a]}>{children}</Animated.View>;
 }
+
+const ReaderCardMemo = React.memo(ReaderCard, (p, n) => p.a.id === n.a.id && p.height === n.height && p.topInset === n.topInset);
 
 function ReaderCard({ a, height, topInset }: { a: Article; height: number; topInset: number }) {
   const { c, isDark } = useTheme();

@@ -327,8 +327,14 @@ export function TopicBubble({
 }) {
   const { c } = useTheme();
   const fontSize = Math.max(11.5, Math.min(15, size * 0.14));
+  // Without a handler this must NOT be a Pressable — a nested pressable
+  // swallows taps meant for an outer one.
+  const Wrapper: any = onPress ? Press : View;
+  const wrapperProps: any = onPress
+    ? { onPress, scaleTo: 0.93, style: { alignItems: 'center', justifyContent: 'center' } }
+    : { style: { alignItems: 'center', justifyContent: 'center' } };
   return (
-    <Press onPress={onPress} scaleTo={0.93} style={{ alignItems: 'center', justifyContent: 'center' }}>
+    <Wrapper {...wrapperProps}>
       <View
         style={{
           width: size + 8,
@@ -380,7 +386,7 @@ export function TopicBubble({
           </Animated.View>
         ) : null}
       </View>
-    </Press>
+    </Wrapper>
   );
 }
 
