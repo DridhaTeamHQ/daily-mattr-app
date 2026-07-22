@@ -59,11 +59,9 @@ export default function Reader() {
     setDrawerOpen(open);
     drawer.value = withSpring(open ? 1 : 0, spring.snappy);
   };
-  const drawerStyle = useAnimatedStyle(() => ({
-    transform: [{ translateX: interpolate(drawer.value, [0, 1], [260, 0]) }],
-  }));
-  const backdropStyle = useAnimatedStyle(() => ({
-    opacity: drawer.value * 0.55,
+  const dialStyle = useAnimatedStyle(() => ({
+    opacity: drawer.value,
+    transform: [{ scale: interpolate(drawer.value, [0, 1], [1.06, 1]) }],
   }));
   const [measuredH, setMeasuredH] = useState(0);
   // Hidden tab screens can measure 0 on web; fall back to the window height.
@@ -206,31 +204,24 @@ export default function Reader() {
         </View>
       ) : null}
 
-      {/* backdrop */}
-      {drawerOpen ? (
-        <Animated.View style={[StyleSheet.absoluteFill, { backgroundColor: '#05070C' }, backdropStyle]}>
-          <Press onPress={() => openDrawer(false)} haptic={false} style={{ flex: 1 }}>
-            <View />
-          </Press>
-        </Animated.View>
-      ) : null}
-
-      {/* side drawer */}
+      {/* full-screen topic dial */}
       <Animated.View
-        style={[
-          st.drawer,
-          drawerStyle,
-          {
-            paddingTop: insets.top + 18,
-            backgroundColor: isDark ? 'rgba(16,22,36,0.98)' : 'rgba(255,255,255,0.98)',
-            borderLeftColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(11,13,18,0.06)',
-          },
-        ]}
+        style={[StyleSheet.absoluteFill, dialStyle]}
         pointerEvents={drawerOpen ? 'auto' : 'none'}
       >
-        <Txt size={19} weight="extrabold" ls={-0.5} style={{ paddingHorizontal: 20, marginBottom: 8 }}>
-          Topics
-        </Txt>
+        <Press onPress={() => openDrawer(false)} haptic={false} style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(5,8,14,0.92)' }]}>
+          <View />
+        </Press>
+        <View pointerEvents="none" style={{ position: 'absolute', top: insets.top + 22, left: 0, right: 0, alignItems: 'center' }}>
+          <Txt size={19} weight="extrabold" color="#fff" ls={-0.5}>
+            Topics
+          </Txt>
+          <Txt size={12} weight="medium" color="rgba(255,255,255,0.45)" style={{ marginTop: 3 }}>
+            drag to spin · tap to choose
+          </Txt>
+        </View>
+        {/* fixed center ring the dial snaps into */}
+        <View pointerEvents="none" style={st.centerRing} />
         <TopicWheel
           selected={topicFilter}
           onSelect={(t) => {
@@ -238,30 +229,27 @@ export default function Reader() {
             openDrawer(false);
           }}
           brand={c.brand}
-          ink={c.ink}
         />
       </Animated.View>
     </View>
   );
 }
 
-/* ---------- Option wheel for topics (React Bits reference, RN-native) ----------
-   Drag/scroll: the centered topic's bubble enlarges while neighbors shrink,
-   fade and arc away; haptic detent per step; tap a row to select it. */
+/* ---------- Full-screen topic dial ----------
+   Big artwork bubbles centered over a dimmed backdrop; drag to spin with
+   haptic detents — the centered bubble swells into the ring; tap to choose. */
 
-const WHEEL_ROW = 62;
+const WHEEL_ROW = 108;
 const WHEEL_ITEMS: (string | null)[] = [null, ...READER_TOPICS]; // null = For You
 
 function TopicWheel({
   selected,
   onSelect,
   brand,
-  ink,
 }: {
   selected: string | null;
   onSelect: (t: string | null) => void;
   brand: string;
-  ink: string;
 }) {
   const wheelY = useSharedValue(0);
   const [wheelH, setWheelH] = useState(0);
@@ -271,7 +259,7 @@ function TopicWheel({
     wheelY.value = e.contentOffset.y;
   });
 
-  // haptic detent each time a new row crosses the center
+  // haptic detent each time a new bubble crosses the ring
   useAnimatedReaction(
     () => Math.round(wheelY.value / WHEEL_ROW),
     (cur, prev) => {
@@ -280,9 +268,17 @@ function TopicWheel({
   );
 
   const pad = Math.max((wheelH - WHEEL_ROW) / 2, 0);
+  const startIndex = Math.max(
+    WHEEL_ITEMS.findIndex((t) => t === selected),
+    0,
+  );
 
   return (
-    <View style={{ flex: 1 }} onLayout={(e) => setWheelH(e.nativeEvent.layout.height)}>
+    <View
+      style={StyleSheet.absoluteFill}
+      pointerEvents="box-none"
+      onLayout={(e) => setWheelH(e.nativeEvent.layout.height)}
+    >
       {wheelH > 0 ? (
         <Animated.ScrollView
           ref={scrollRef}
@@ -291,35 +287,33 @@ function TopicWheel({
           snapToInterval={WHEEL_ROW}
           decelerationRate="fast"
           showsVerticalScrollIndicator={false}
+          contentOffset={{ x: 0, y: startIndex * WHEEL_ROW }}
           contentContainerStyle={{ paddingTop: pad, paddingBottom: pad }}
         >
-          {WHEEL_ITEMS.map((t, i) => {
-            const isSel = selected === t;
-            return (
-              <WheelRow key={t ?? 'foryou'} index={i} wheelY={wheelY}>
-                <Press
-                  haptic={false}
-                  onPress={() => {
-                    scrollRef.current?.scrollTo({ y: i * WHEEL_ROW, animated: true });
-                    onSelect(t);
-                  }}
-                  style={st.wheelRowInner}
-                >
-                  {t === null ? (
-                    <View style={[st.forYouDot, { backgroundColor: brand }]}>
-                      <LIcon name="sparkles" size={16} color="#fff" strokeWidth={2.2} />
-                    </View>
-                  ) : (
-                    <TopicBubble topic={t} size={44} label=" " />
-                  )}
-                  <Txt size={15} weight={isSel ? 'bold' : 'medium'} color={isSel ? brand : ink} numberOfLines={1} style={{ flexShrink: 1 }}>
-                    {t ?? 'For You'}
-                  </Txt>
-                  {isSel ? <LIcon name="check" size={14} color={brand} strokeWidth={2.8} /> : null}
-                </Press>
-              </WheelRow>
-            );
-          })}
+          {WHEEL_ITEMS.map((t, i) => (
+            <WheelRow key={t ?? 'foryou'} index={i} wheelY={wheelY}>
+              <Press
+                haptic={false}
+                onPress={() => {
+                  scrollRef.current?.scrollTo({ y: i * WHEEL_ROW, animated: true });
+                  onSelect(t);
+                }}
+                scaleTo={0.94}
+                style={{ alignItems: 'center' }}
+              >
+                {t === null ? (
+                  <View style={[st.forYouBubble, { backgroundColor: brand }]}>
+                    <LIcon name="sparkles" size={22} color="#fff" strokeWidth={2.2} />
+                    <Txt size={12.5} weight="bold" color="#fff" style={{ marginTop: 4 }}>
+                      For You
+                    </Txt>
+                  </View>
+                ) : (
+                  <TopicBubble topic={t} size={92} selected={selected === t} />
+                )}
+              </Press>
+            </WheelRow>
+          ))}
         </Animated.ScrollView>
       ) : null}
     </View>
@@ -332,22 +326,39 @@ function WheelRow({ index, wheelY, children }: { index: number; wheelY: SharedVa
     const ad = Math.abs(d);
     return {
       transform: [
-        { translateX: (1 - Math.cos(Math.min(ad * 0.38, 1.35))) * 66 },
-        { scale: interpolate(ad, [0, 1, 2, 4], [1.16, 0.88, 0.76, 0.66], Extrapolation.CLAMP) },
-        { rotate: `${Math.max(-26, Math.min(26, d * -5))}deg` },
+        { scale: interpolate(ad, [0, 1, 2, 3.5], [1.24, 0.78, 0.58, 0.44], Extrapolation.CLAMP) },
+        { translateY: d * -6 }, // rows gather slightly toward the center
       ],
-      opacity: interpolate(ad, [0, 1, 2, 3.5], [1, 0.5, 0.28, 0.1], Extrapolation.CLAMP),
+      opacity: interpolate(ad, [0, 1, 2, 3], [1, 0.5, 0.24, 0.08], Extrapolation.CLAMP),
     };
   });
-  return <Animated.View style={[{ height: WHEEL_ROW, justifyContent: 'center' }, a]}>{children}</Animated.View>;
+  return (
+    <Animated.View style={[{ height: WHEEL_ROW, alignItems: 'center', justifyContent: 'center' }, a]}>
+      {children}
+    </Animated.View>
+  );
 }
 
 const st = StyleSheet.create({
-  wheelRowInner: {
-    flexDirection: 'row',
+  centerRing: {
+    position: 'absolute',
+    top: '50%',
+    left: '50%',
+    marginLeft: -62,
+    marginTop: -62,
+    width: 124,
+    height: 124,
+    borderRadius: 62,
+    borderWidth: 1.5,
+    borderColor: 'rgba(255,255,255,0.18)',
+  },
+  forYouBubble: {
+    width: 92,
+    height: 92,
+    borderRadius: 46,
     alignItems: 'center',
-    gap: 12,
-    paddingHorizontal: 18,
+    justifyContent: 'center',
+    boxShadow: '0 10px 30px rgba(57,121,255,0.45)',
   },
   topicsBtn: {
     position: 'absolute',
@@ -366,32 +377,6 @@ const st = StyleSheet.create({
     borderRadius: 999,
     paddingHorizontal: 11,
     paddingVertical: 5,
-  },
-  drawer: {
-    position: 'absolute',
-    top: 0,
-    bottom: 0,
-    right: 0,
-    width: 248,
-    borderLeftWidth: 1,
-    boxShadow: '-16px 0 44px rgba(0,0,0,0.4)',
-  },
-  drawerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    marginHorizontal: 8,
-    borderRadius: 14,
-    marginBottom: 2,
-  },
-  forYouDot: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    alignItems: 'center',
-    justifyContent: 'center',
   },
 })
 
