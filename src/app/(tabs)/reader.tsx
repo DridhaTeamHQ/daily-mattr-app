@@ -17,6 +17,8 @@ import Animated, {
   interpolate,
   withSpring,
   Extrapolation,
+  useAnimatedReaction,
+  runOnJS,
   type SharedValue,
 } from 'react-native-reanimated';
 import { colors, radius, spring, topicOf } from '@/theme';
@@ -226,50 +228,127 @@ export default function Reader() {
         ]}
         pointerEvents={drawerOpen ? 'auto' : 'none'}
       >
-        <Txt size={19} weight="extrabold" ls={-0.5} style={{ paddingHorizontal: 20, marginBottom: 14 }}>
+        <Txt size={19} weight="extrabold" ls={-0.5} style={{ paddingHorizontal: 20, marginBottom: 8 }}>
           Topics
         </Txt>
-        <RNScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 40 }}>
-          <Press
-            onPress={() => {
-              setTopicFilter(null);
-              openDrawer(false);
-            }}
-            style={[st.drawerRow, topicFilter === null ? { backgroundColor: c.brandSubtle } : null]}
-          >
-            <View style={[st.forYouDot, { backgroundColor: c.brand }]}>
-              <LIcon name="sparkles" size={15} color="#fff" strokeWidth={2.2} />
-            </View>
-            <Txt size={14} weight={topicFilter === null ? 'bold' : 'medium'} color={topicFilter === null ? c.brand : c.ink}>
-              For You
-            </Txt>
-          </Press>
-          {READER_TOPICS.map((t) => {
-            const on = topicFilter === t;
-            return (
-              <Press
-                key={t}
-                onPress={() => {
-                  setTopicFilter(t);
-                  openDrawer(false);
-                }}
-                style={[st.drawerRow, on ? { backgroundColor: c.brandSubtle } : null]}
-              >
-                <TopicBubble topic={t} size={40} label=" " />
-                <Txt size={14} weight={on ? 'bold' : 'medium'} color={on ? c.brand : c.ink} style={{ flex: 1 }}>
-                  {t}
-                </Txt>
-                {on ? <LIcon name="check" size={15} color={c.brand} strokeWidth={2.6} /> : null}
-              </Press>
-            );
-          })}
-        </RNScrollView>
+        <TopicWheel
+          selected={topicFilter}
+          onSelect={(t) => {
+            setTopicFilter(t);
+            openDrawer(false);
+          }}
+          brand={c.brand}
+          ink={c.ink}
+        />
       </Animated.View>
     </View>
   );
 }
 
+/* ---------- Option wheel for topics (React Bits reference, RN-native) ----------
+   Drag/scroll: the centered topic's bubble enlarges while neighbors shrink,
+   fade and arc away; haptic detent per step; tap a row to select it. */
+
+const WHEEL_ROW = 62;
+const WHEEL_ITEMS: (string | null)[] = [null, ...READER_TOPICS]; // null = For You
+
+function TopicWheel({
+  selected,
+  onSelect,
+  brand,
+  ink,
+}: {
+  selected: string | null;
+  onSelect: (t: string | null) => void;
+  brand: string;
+  ink: string;
+}) {
+  const wheelY = useSharedValue(0);
+  const [wheelH, setWheelH] = useState(0);
+  const scrollRef = useRef<any>(null);
+
+  const onWheelScroll = useAnimatedScrollHandler((e) => {
+    wheelY.value = e.contentOffset.y;
+  });
+
+  // haptic detent each time a new row crosses the center
+  useAnimatedReaction(
+    () => Math.round(wheelY.value / WHEEL_ROW),
+    (cur, prev) => {
+      if (prev !== null && cur !== prev) runOnJS(tick)();
+    },
+  );
+
+  const pad = Math.max((wheelH - WHEEL_ROW) / 2, 0);
+
+  return (
+    <View style={{ flex: 1 }} onLayout={(e) => setWheelH(e.nativeEvent.layout.height)}>
+      {wheelH > 0 ? (
+        <Animated.ScrollView
+          ref={scrollRef}
+          onScroll={onWheelScroll}
+          scrollEventThrottle={16}
+          snapToInterval={WHEEL_ROW}
+          decelerationRate="fast"
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={{ paddingTop: pad, paddingBottom: pad }}
+        >
+          {WHEEL_ITEMS.map((t, i) => {
+            const isSel = selected === t;
+            return (
+              <WheelRow key={t ?? 'foryou'} index={i} wheelY={wheelY}>
+                <Press
+                  haptic={false}
+                  onPress={() => {
+                    scrollRef.current?.scrollTo({ y: i * WHEEL_ROW, animated: true });
+                    onSelect(t);
+                  }}
+                  style={st.wheelRowInner}
+                >
+                  {t === null ? (
+                    <View style={[st.forYouDot, { backgroundColor: brand }]}>
+                      <LIcon name="sparkles" size={16} color="#fff" strokeWidth={2.2} />
+                    </View>
+                  ) : (
+                    <TopicBubble topic={t} size={44} label=" " />
+                  )}
+                  <Txt size={15} weight={isSel ? 'bold' : 'medium'} color={isSel ? brand : ink} numberOfLines={1} style={{ flexShrink: 1 }}>
+                    {t ?? 'For You'}
+                  </Txt>
+                  {isSel ? <LIcon name="check" size={14} color={brand} strokeWidth={2.8} /> : null}
+                </Press>
+              </WheelRow>
+            );
+          })}
+        </Animated.ScrollView>
+      ) : null}
+    </View>
+  );
+}
+
+function WheelRow({ index, wheelY, children }: { index: number; wheelY: SharedValue<number>; children: React.ReactNode }) {
+  const a = useAnimatedStyle(() => {
+    const d = index - wheelY.value / WHEEL_ROW;
+    const ad = Math.abs(d);
+    return {
+      transform: [
+        { translateX: (1 - Math.cos(Math.min(ad * 0.38, 1.35))) * 66 },
+        { scale: interpolate(ad, [0, 1, 2, 4], [1.16, 0.88, 0.76, 0.66], Extrapolation.CLAMP) },
+        { rotate: `${Math.max(-26, Math.min(26, d * -5))}deg` },
+      ],
+      opacity: interpolate(ad, [0, 1, 2, 3.5], [1, 0.5, 0.28, 0.1], Extrapolation.CLAMP),
+    };
+  });
+  return <Animated.View style={[{ height: WHEEL_ROW, justifyContent: 'center' }, a]}>{children}</Animated.View>;
+}
+
 const st = StyleSheet.create({
+  wheelRowInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingHorizontal: 18,
+  },
   topicsBtn: {
     position: 'absolute',
     right: 18,
