@@ -163,12 +163,12 @@ export function ArticleRow({
     <Animated.View entering={FadeInDown.delay(Math.min(index, 6) * 50).springify().damping(30).stiffness(250).mass(0.9)}>
       <Press onPress={() => router.push(`/article/${a.id}`)} style={s.rowPlain}>
         <View style={{ flex: 1, paddingRight: 16 }}>
-          <Txt size={16} lh={22} weight="bold" ls={-0.3} numberOfLines={3}>
+          <Txt size={15.5} lh={21} weight="bold" ls={-0.3} numberOfLines={2}>
             {a.title}
           </Txt>
-          <Txt size={12} weight="medium" color={c.inkFaint} style={{ marginTop: 7 }}>
+          <Txt size={12} weight="medium" color={c.inkFaint} style={{ marginTop: 6 }}>
             {showTopic ? `${a.topic} · ` : ''}
-            {timeAgo(a.publishedAt)} · {a.readMins} min
+            {timeAgo(a.publishedAt)}
           </Txt>
         </View>
         <Image
@@ -351,7 +351,7 @@ const s = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 24,
-    paddingVertical: 17,
+    paddingVertical: 14,
   },
   hairline: {
     height: StyleSheet.hairlineWidth,
@@ -359,7 +359,7 @@ const s = StyleSheet.create({
     marginRight: 24,
   },
   thumb: { width: 88, height: 88, borderRadius: 18 },
-  thumbPlain: { width: 68, height: 68, borderRadius: 14 },
+  thumbPlain: { width: 62, height: 62, borderRadius: 13 },
   carCard: {
     width: 282,
     borderRadius: radius.lg,

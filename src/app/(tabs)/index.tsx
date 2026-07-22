@@ -79,14 +79,15 @@ export default function Home() {
   }, [feed]);
 
   const carousel = deduped.slice(0, 6);
-  const list = deduped.slice(6);
+  const list = deduped.slice(6, 18); // Latest stays digestible — a page, not a firehose
 
   // one continuous list — older stories stream in via keyset pagination
   const morePages = useInfiniteQuery({
     queryKey: ['morePages', tab],
-    queryFn: ({ pageParam }) => fetchFeedPage({ before: pageParam, topics: active.topics, limit: 15 }),
+    queryFn: ({ pageParam }) => fetchFeedPage({ before: pageParam ?? list[list.length - 1]?.publishedAt ?? null, topics: active.topics, limit: 15 }),
     initialPageParam: null as string | null,
     getNextPageParam: (last) => (last.length ? last[last.length - 1].publishedAt : undefined),
+    enabled: false, // fetched only when the user taps "More stories"
   });
   const older = useMemo(() => {
     const shownIds = new Set(deduped.map((a) => a.id));
@@ -101,17 +102,6 @@ export default function Home() {
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [morePages.data, deduped]);
-
-  const onScrollEnd = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
-    const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;
-    if (
-      contentOffset.y + layoutMeasurement.height > contentSize.height - 900 &&
-      morePages.hasNextPage &&
-      !morePages.isFetchingNextPage
-    ) {
-      morePages.fetchNextPage();
-    }
-  };
 
   const refetchAll = () => {
     forYou.refetch();
@@ -134,8 +124,6 @@ export default function Home() {
       <ScrollView
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{ paddingTop: insets.top + 14, paddingBottom: NAVBAR_CLEARANCE + 16 }}
-        onScroll={onScrollEnd}
-        scrollEventThrottle={120}
         refreshControl={<RefreshControl refreshing={false} tintColor={c.brand} onRefresh={refetchAll} />}
       >
         {/* quiet header */}
@@ -237,6 +225,15 @@ export default function Home() {
               {older.map((a, i) => (
                 <ArticleRow key={a.id} a={a} index={i} divider={i < older.length - 1} />
               ))}
+              <Press
+                onPress={() => morePages.fetchNextPage()}
+                scaleTo={0.97}
+                style={[s.moreBtn, { borderColor: isDark ? 'rgba(255,255,255,0.16)' : 'rgba(11,13,18,0.14)' }]}
+              >
+                <Txt size={14} weight="semibold" color={c.inkSoft}>
+                  {morePages.isFetchingNextPage ? 'Loading…' : 'More stories'}
+                </Txt>
+              </Press>
             </View>
           </>
         )}
@@ -255,6 +252,15 @@ function PulseDot() {
 }
 
 const s = StyleSheet.create({
+  moreBtn: {
+    marginHorizontal: 24,
+    marginTop: 20,
+    height: 46,
+    borderRadius: 999,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   sectionRow: {
     flexDirection: 'row',
     alignItems: 'center',
