@@ -456,46 +456,22 @@ function ReaderCard({ a, height, topInset }: { a: Article; height: number; topIn
         </View>
       </View>
 
-      {/* frosted sheet that FEATHERS into the image — no hard edge */}
+      {/* frosted sheet that FEATHERS into the image — no hard edge.
+          The ambient backdrop beneath is already an image-blur, so the sheet
+          itself only needs a feathered tint (web adds real backdrop blur). */}
       <View style={[s.sheet, { top: imgH - 40 }]}>
         {Platform.OS === 'web' ? (
-          <>
-            <BlurView intensity={26} tint={isDark ? 'dark' : 'light'} style={StyleSheet.absoluteFill} />
-            <LinearGradient
-              colors={
-                isDark
-                  ? (['rgba(12,17,29,0)', 'rgba(12,17,29,0.42)', 'rgba(12,17,29,0.62)'] as any)
-                  : (['rgba(250,251,253,0)', 'rgba(250,251,253,0.48)', 'rgba(250,251,253,0.68)'] as any)
-              }
-              locations={[0, 0.14, 0.3]}
-              style={StyleSheet.absoluteFill}
-            />
-          </>
-        ) : (
-          <MaskedView
-            style={StyleSheet.absoluteFill}
-            maskElement={
-              <LinearGradient
-                colors={['rgba(0,0,0,0)', 'rgba(0,0,0,0.65)', '#000']}
-                locations={[0, 0.1, 0.22]}
-                style={{ flex: 1 }}
-              />
-            }
-          >
-            <BlurView
-              intensity={30}
-              tint={isDark ? 'dark' : 'light'}
-              experimentalBlurMethod="dimezisBlurView"
-              style={StyleSheet.absoluteFill}
-            />
-            <View
-              style={[
-                StyleSheet.absoluteFill,
-                { backgroundColor: isDark ? 'rgba(12,17,29,0.6)' : 'rgba(250,251,253,0.66)' },
-              ]}
-            />
-          </MaskedView>
-        )}
+          <BlurView intensity={26} tint={isDark ? 'dark' : 'light'} style={StyleSheet.absoluteFill} />
+        ) : null}
+        <LinearGradient
+          colors={
+            isDark
+              ? (['rgba(12,17,29,0)', 'rgba(12,17,29,0.42)', 'rgba(12,17,29,0.62)'] as any)
+              : (['rgba(250,251,253,0)', 'rgba(250,251,253,0.48)', 'rgba(250,251,253,0.68)'] as any)
+          }
+          locations={[0, 0.14, 0.3]}
+          style={StyleSheet.absoluteFill}
+        />
 
         <View style={{ flex: 1, paddingHorizontal: 24, paddingTop: 34 }}>
         <Headline numberOfLines={3} style={{ fontSize: 25, lineHeight: 31 }}>
