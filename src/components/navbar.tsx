@@ -54,7 +54,7 @@ export function GlassNavbar({ state, navigation }: TabBarProps) {
                 const event = navigation.emit({ type: 'tabPress', target: route.key, canPreventDefault: true });
                 if (!focused && !event.defaultPrevented) navigation.navigate(route.name);
               }}
-              style={[s.tab, focused ? s.tabActive : null]}
+              style={[s.tab, focused ? [s.tabActive, { backgroundColor: c.brand }] : null]}
             >
               <TabItem icon={meta.icon} label={meta.label} focused={focused} />
             </Pressable>
@@ -86,14 +86,14 @@ function TabItem({ icon, label, focused }: { icon: string; label: string; focuse
       <Animated.View style={iconStyle}>
         <LIcon
           name={icon}
-          size={21}
-          color={focused ? c.ink : c.inkFaint}
+          size={20}
+          color={focused ? '#fff' : c.inkFaint}
           strokeWidth={focused ? 2.4 : 1.9}
-          fill={focused ? c.ink : 'none'}
+          fill={focused ? '#fff' : 'none'}
         />
       </Animated.View>
       <Animated.View style={[labelStyle, { overflow: 'hidden' }]}>
-        <Txt size={13.5} weight="bold" color={c.ink} numberOfLines={1}>
+        <Txt size={13.5} weight="bold" color="#fff" numberOfLines={1}>
           {label}
         </Txt>
       </Animated.View>
@@ -136,5 +136,6 @@ const s = StyleSheet.create({
   },
   tabActive: {
     flexGrow: 1.9,
+    boxShadow: '0 6px 18px rgba(57,121,255,0.4)',
   },
 });

@@ -184,6 +184,48 @@ export function ArticleRow({
   );
 }
 
+/* ---------- Carousel story card (GLOBAL-reference style) ---------- */
+
+export function CarouselCard({ a, index = 0 }: { a: Article; index?: number }) {
+  const router = useRouter();
+  const { c, isDark } = useTheme();
+  const t = topicOf(a.topic);
+  useEffect(() => trackImpression(a.id, a.topic), [a.id, a.topic]);
+
+  return (
+    <Animated.View entering={FadeInDown.delay(Math.min(index, 5) * 70).springify().damping(30).stiffness(250).mass(0.9)}>
+      <Press
+        onPress={() => router.push(`/article/${a.id}`)}
+        scaleTo={0.975}
+        style={[s.carCard, isDark ? null : shadow.soft, glassCard(c, isDark)]}
+      >
+        <Image
+          source={a.imageUrl ? { uri: a.imageUrl } : artFor(a.topic)}
+          style={s.carImage}
+          contentFit="cover"
+          recyclingKey={a.id}
+          transition={240}
+        />
+        <View style={{ paddingHorizontal: 4, paddingTop: 12 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+            <LinearGradient colors={t.grad} style={s.carPubDot} />
+            <Txt size={12} weight="semibold" color={c.inkSoft} numberOfLines={1} style={{ flexShrink: 1 }}>
+              {a.publisher}
+            </Txt>
+            <LIcon name="badge-check" size={12.5} color={c.brand} />
+          </View>
+          <Txt size={15.5} lh={20.5} weight="bold" ls={-0.3} numberOfLines={2} style={{ marginTop: 8 }}>
+            {a.title}
+          </Txt>
+          <Txt size={11.5} weight="medium" color={c.inkFaint} style={{ marginTop: 8 }}>
+            {a.topic} · {timeAgo(a.publishedAt)} · {a.readMins} min
+          </Txt>
+        </View>
+      </Press>
+    </Animated.View>
+  );
+}
+
 /* ---------- Recommendation card with match score ---------- */
 
 export function RecommendCard({ a, index = 0 }: { a: Article; index?: number }) {
@@ -318,6 +360,19 @@ const s = StyleSheet.create({
   },
   thumb: { width: 88, height: 88, borderRadius: 18 },
   thumbPlain: { width: 68, height: 68, borderRadius: 14 },
+  carCard: {
+    width: 282,
+    borderRadius: radius.lg,
+    padding: 10,
+    paddingBottom: 16,
+    marginRight: 14,
+  },
+  carImage: {
+    width: '100%',
+    height: 158,
+    borderRadius: radius.md,
+  },
+  carPubDot: { width: 8, height: 8, borderRadius: 4 },
   recCard: {
     width: 258,
     borderRadius: radius.lg,

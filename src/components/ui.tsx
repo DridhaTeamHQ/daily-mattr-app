@@ -275,6 +275,41 @@ export function CategoryTab({
   );
 }
 
+/* ---------- Minimal pill tab: solid ink active, hairline outline inactive ---------- */
+
+export function PillTab({
+  label,
+  active,
+  onPress,
+}: {
+  label: string;
+  active?: boolean;
+  onPress?: () => void;
+}) {
+  const { c, isDark } = useTheme();
+  const activeBg = isDark ? '#F2F5FA' : '#0B0D12';
+  const activeInk = isDark ? '#0B0D12' : '#FFFFFF';
+  return (
+    <Press
+      onPress={() => {
+        tick();
+        onPress?.();
+      }}
+      scaleTo={0.95}
+      style={[
+        s.pillTab,
+        active
+          ? { backgroundColor: activeBg }
+          : { borderWidth: 1, borderColor: isDark ? 'rgba(255,255,255,0.16)' : 'rgba(11,13,18,0.14)' },
+      ]}
+    >
+      <Txt size={13.5} weight={active ? 'bold' : 'medium'} color={active ? activeInk : c.inkSoft}>
+        {label}
+      </Txt>
+    </Press>
+  );
+}
+
 /* ---------- Circular topic bubble (artwork-filled, reference style) ---------- */
 
 export function TopicBubble({
@@ -430,6 +465,14 @@ const s = StyleSheet.create({
     height: 40,
     borderRadius: radius.pill,
     marginRight: 9,
+  },
+  pillTab: {
+    height: 38,
+    borderRadius: radius.pill,
+    paddingHorizontal: 17,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 8,
   },
   sectionRow: {
     flexDirection: 'row',

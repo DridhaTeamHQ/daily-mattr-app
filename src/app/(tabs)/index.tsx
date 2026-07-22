@@ -15,8 +15,8 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 import { useTheme } from '@/lib/theme';
-import { Txt, Overline, IconButton, CategoryTab, Shimmer, Press } from '@/components/ui';
-import { TopStoryCard, ArticleRow } from '@/components/cards';
+import { Txt, IconButton, PillTab, Shimmer, Press } from '@/components/ui';
+import { CarouselCard, ArticleRow } from '@/components/cards';
 import { NAVBAR_CLEARANCE } from '@/components/navbar';
 import { fetchFeed, fetchFeedPage, fetchForYou, fetchTrending, fetchBreaking } from '@/lib/queries';
 import { getUnreadBreaking } from '@/lib/notifications';
@@ -78,8 +78,8 @@ export default function Home() {
     });
   }, [feed]);
 
-  const hero = deduped[0];
-  const list = deduped.slice(1);
+  const carousel = deduped.slice(0, 6);
+  const list = deduped.slice(6);
 
   // one continuous list — older stories stream in via keyset pagination
   const morePages = useInfiniteQuery({
@@ -126,7 +126,7 @@ export default function Home() {
   const showBreaking =
     !!breaking &&
     Date.now() - new Date(breaking.detectedAt).getTime() < 12 * 3600_000 &&
-    breaking.id !== hero?.id;
+    !carousel.some((a) => a.id === breaking.id);
 
   return (
     <View style={{ flex: 1, backgroundColor: c.bg }}>
@@ -156,14 +156,14 @@ export default function Home() {
           </View>
         </Animated.View>
 
-        {/* greeting */}
-        <Animated.View entering={FadeInDown.delay(40).springify().damping(30).stiffness(250).mass(0.9)} style={{ paddingHorizontal: 24, marginTop: 20 }}>
-          <Txt size={27} lh={32} weight="extrabold" ls={-0.9}>
-            {greeting()}.
+        {/* display headline */}
+        <Animated.View
+          entering={FadeInDown.delay(40).springify().damping(30).stiffness(250).mass(0.9)}
+          style={{ paddingHorizontal: 24, marginTop: 22, transform: [{ skewX: '-6deg' }] }}
+        >
+          <Txt size={38} lh={42} weight="extrabold" ls={-1.2} style={{ textTransform: 'uppercase' }}>
+            {"What's new\ntoday?"}
           </Txt>
-          <Overline color={c.inkFaint} style={{ marginTop: 5 }}>
-            {new Date().toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' })}
-          </Overline>
         </Animated.View>
 
         {/* tabs */}
@@ -173,25 +173,41 @@ export default function Home() {
           contentContainerStyle={{ paddingHorizontal: 24, paddingTop: 18, paddingBottom: 4 }}
         >
           {TABS.map((t) => (
-            <CategoryTab key={t.label} label={t.label} active={tab === t.label} onPress={() => setTab(t.label)} />
+            <PillTab key={t.label} label={t.label} active={tab === t.label} onPress={() => setTab(t.label)} />
           ))}
         </ScrollView>
 
         {loading ? (
           <View style={{ marginTop: 16, gap: 2 }}>
-            <Shimmer style={{ height: 224, marginHorizontal: 24, borderRadius: 22, marginBottom: 18 }} />
+            <Shimmer style={{ height: 250, marginHorizontal: 24, borderRadius: 22, marginBottom: 18 }} />
             {[0, 1, 2].map((i) => (
               <Shimmer key={i} style={{ height: 68, marginHorizontal: 24, marginBottom: 14 }} />
             ))}
           </View>
         ) : (
           <>
-            {/* one hero */}
-            {hero ? (
-              <View style={{ marginTop: 14 }}>
-                <TopStoryCard a={hero} />
-              </View>
-            ) : null}
+            {/* top stories carousel */}
+            <View style={s.sectionRow}>
+              <Txt size={17} weight="bold" ls={-0.4}>
+                Top stories
+              </Txt>
+              <Press onPress={() => router.push('/reader')} scaleTo={0.94} style={{ paddingVertical: 4 }}>
+                <Txt size={13} weight="semibold" color={c.brand}>
+                  See All
+                </Txt>
+              </Press>
+            </View>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              snapToInterval={296}
+              decelerationRate="fast"
+              contentContainerStyle={{ paddingHorizontal: 24, paddingBottom: 6, paddingTop: 2 }}
+            >
+              {carousel.map((a, i) => (
+                <CarouselCard key={a.id} a={a} index={i} />
+              ))}
+            </ScrollView>
 
             {/* one-line breaking strip */}
             {showBreaking ? (
@@ -208,8 +224,13 @@ export default function Home() {
               </Animated.View>
             ) : null}
 
-            {/* the feed — one ranked list, nothing else */}
-            <View style={{ marginTop: 10 }}>
+            {/* the feed — one ranked list */}
+            <View style={[s.sectionRow, { marginTop: 26, marginBottom: 2 }]}>
+              <Txt size={17} weight="bold" ls={-0.4}>
+                Latest
+              </Txt>
+            </View>
+            <View>
               {list.map((a, i) => (
                 <ArticleRow key={a.id} a={a} index={i} />
               ))}
@@ -234,6 +255,14 @@ function PulseDot() {
 }
 
 const s = StyleSheet.create({
+  sectionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 24,
+    marginTop: 22,
+    marginBottom: 12,
+  },
   topBar: {
     flexDirection: 'row',
     alignItems: 'center',
