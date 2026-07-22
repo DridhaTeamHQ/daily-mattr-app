@@ -50,7 +50,7 @@ export const light: Palette = {
 };
 
 export const darkPalette: Palette = {
-  brand: '#4D88FF',
+  brand: '#3979FF',
   brandDark: '#2E61CC',
   brandLight: '#7AA5FF',
   brandSubtle: 'rgba(77,136,255,0.16)',

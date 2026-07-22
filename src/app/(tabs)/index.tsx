@@ -1,23 +1,29 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { View, ScrollView, StyleSheet, RefreshControl, NativeSyntheticEvent, NativeScrollEvent } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useQuery, useInfiniteQuery } from '@tanstack/react-query';
 import { useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Image } from 'expo-image';
-import Animated, { FadeInDown, FadeIn } from 'react-native-reanimated';
-import { shadow } from '@/theme';
+import Animated, {
+  FadeInDown,
+  FadeIn,
+  useSharedValue,
+  useAnimatedStyle,
+  withRepeat,
+  withSequence,
+  withTiming,
+} from 'react-native-reanimated';
 import { useTheme } from '@/lib/theme';
-import { Txt, Overline, IconButton, CategoryTab, SectionHeader, Shimmer } from '@/components/ui';
-import { TopStoryCard, ArticleRow, RecommendCard, TrendingRow } from '@/components/cards';
+import { Txt, Overline, IconButton, CategoryTab, Shimmer, Press } from '@/components/ui';
+import { TopStoryCard, ArticleRow } from '@/components/cards';
 import { NAVBAR_CLEARANCE } from '@/components/navbar';
-import { fetchFeed, fetchFeedPage, fetchForYou, fetchTrending, fetchByIds } from '@/lib/queries';
+import { fetchFeed, fetchFeedPage, fetchForYou, fetchTrending, fetchBreaking } from '@/lib/queries';
 import { getUnreadBreaking } from '@/lib/notifications';
-import { useStore } from '@/lib/store';
 
-const CHIPS: { label: string; icon?: string; topics?: string[] }[] = [
-  { label: 'For You', icon: 'sparkles' },
-  { label: 'Trending', icon: 'flame' },
+const TABS: { label: string; topics?: string[] }[] = [
+  { label: 'For You' },
+  { label: 'Trending' },
   { label: 'Tech', topics: ['Tech & AI'] },
   { label: 'Politics', topics: ['Politics'] },
   { label: 'Business', topics: ['Business', 'Markets & Startups'] },
@@ -39,47 +45,62 @@ export default function Home() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { c, isDark, toggle } = useTheme();
-  const { topTopics, history } = useStore();
-  const [chip, setChip] = useState('For You');
+  const [tab, setTab] = useState('For You');
 
-  const active = CHIPS.find((ch) => ch.label === chip)!;
+  const active = TABS.find((t) => t.label === tab)!;
 
   const forYou = useQuery({ queryKey: ['forYou'], queryFn: () => fetchForYou(60) });
-  const trending = useQuery({ queryKey: ['trending'], queryFn: () => fetchTrending(8) });
+  const trending = useQuery({
+    queryKey: ['trending'],
+    queryFn: () => fetchTrending(20),
+    enabled: tab === 'Trending',
+  });
   const topical = useQuery({
-    queryKey: ['topical', chip],
+    queryKey: ['topical', tab],
     queryFn: () => fetchFeed({ topics: active.topics, limit: 30 }),
     enabled: !!active.topics,
   });
-
-  const continueIds = useMemo(() => history.slice(0, 6).map((h) => h.id), [history]);
-  const continueReading = useQuery({
-    queryKey: ['continue', continueIds.join(',')],
-    queryFn: () => fetchByIds(continueIds),
-    enabled: continueIds.length > 0,
-  });
-
   const unread = useQuery({ queryKey: ['breakingUnread'], queryFn: getUnreadBreaking, staleTime: 120_000 });
+  const breakingTop = useQuery({ queryKey: ['breakingTop'], queryFn: () => fetchBreaking(1), staleTime: 120_000 });
 
-  const feed = active.topics ? topical.data : chip === 'Trending' ? trending.data : forYou.data;
-  const loading = active.topics ? topical.isLoading : chip === 'Trending' ? trending.isLoading : forYou.isLoading;
+  const feed = active.topics ? topical.data : tab === 'Trending' ? trending.data : forYou.data;
+  const loading = active.topics ? topical.isLoading : tab === 'Trending' ? trending.isLoading : forYou.isLoading;
 
-  const hero = (feed ?? [])[0];
-  const carousel = (feed ?? []).slice(1, 8);
-  const becauseYou = (forYou.data ?? []).filter((a) => a.sim != null && a.sim > 0.5).slice(3, 11);
-  const quickReads = (feed ?? []).slice(8, 14);
+  // collapse syndicated duplicates (same story pushed by multiple feeds)
+  const norm = (t: string) => t.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().slice(0, 80);
+  const deduped = useMemo(() => {
+    const seen = new Set<string>();
+    return (feed ?? []).filter((a) => {
+      const k = norm(a.title);
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
+  }, [feed]);
 
-  // Infinite "More stories": keyset pagination, deduped against the ranked feed
+  const hero = deduped[0];
+  const list = deduped.slice(1);
+
+  // one continuous list — older stories stream in via keyset pagination
   const morePages = useInfiniteQuery({
-    queryKey: ['morePages', chip],
+    queryKey: ['morePages', tab],
     queryFn: ({ pageParam }) => fetchFeedPage({ before: pageParam, topics: active.topics, limit: 15 }),
     initialPageParam: null as string | null,
     getNextPageParam: (last) => (last.length ? last[last.length - 1].publishedAt : undefined),
   });
-  const more = useMemo(() => {
-    const shown = new Set((feed ?? []).slice(0, 14).map((a) => a.id));
-    return (morePages.data?.pages.flat() ?? []).filter((a) => !shown.has(a.id));
-  }, [morePages.data, feed]);
+  const older = useMemo(() => {
+    const shownIds = new Set(deduped.map((a) => a.id));
+    const shownTitles = new Set(deduped.map((a) => norm(a.title)));
+    const out: typeof deduped = [];
+    for (const a of morePages.data?.pages.flat() ?? []) {
+      const k = norm(a.title);
+      if (shownIds.has(a.id) || shownTitles.has(k)) continue;
+      shownTitles.add(k);
+      out.push(a);
+    }
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [morePages.data, deduped]);
 
   const onScrollEnd = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
     const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;
@@ -94,146 +115,108 @@ export default function Home() {
 
   const refetchAll = () => {
     forYou.refetch();
-    trending.refetch();
+    if (tab === 'Trending') trending.refetch();
     if (active.topics) topical.refetch();
+    breakingTop.refetch();
   };
+
+  // slim breaking strip: only when there is a fresh cluster, and never
+  // duplicating the hero
+  const breaking = breakingTop.data?.[0];
+  const showBreaking =
+    !!breaking &&
+    Date.now() - new Date(breaking.detectedAt).getTime() < 12 * 3600_000 &&
+    breaking.id !== hero?.id;
 
   return (
     <View style={{ flex: 1, backgroundColor: c.bg }}>
       <LinearGradient colors={c.canvas} style={StyleSheet.absoluteFill} />
-      {isDark ? (
-        // faint brand glow at the very top of the dark canvas
-        <LinearGradient
-          colors={['rgba(77,136,255,0.14)', 'rgba(77,136,255,0)']}
-          style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 260 }}
-        />
-      ) : null}
       <ScrollView
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={{ paddingTop: insets.top + 12, paddingBottom: NAVBAR_CLEARANCE + 16 }}
+        contentContainerStyle={{ paddingTop: insets.top + 14, paddingBottom: NAVBAR_CLEARANCE + 16 }}
         onScroll={onScrollEnd}
         scrollEventThrottle={120}
         refreshControl={<RefreshControl refreshing={false} tintColor={c.brand} onRefresh={refetchAll} />}
       >
-        {/* Top bar: toggle · centered wordmark · bell */}
+        {/* quiet header */}
         <Animated.View entering={FadeIn.duration(400)} style={s.topBar}>
-          <IconButton name={isDark ? 'sun' : 'moon'} size={18} onPress={toggle} />
           <Image
             source={require('../../../assets/images/wordmark.svg')}
-            style={s.wordmark}
+            style={{ width: 118, height: 22 }}
             contentFit="contain"
           />
-          <IconButton name="bell" size={18} badge={(unread.data ?? 0) > 0} onPress={() => router.push("/notifications")} />
+          <View style={{ flexDirection: 'row' }}>
+            <IconButton name={isDark ? 'sun' : 'moon'} size={17} onPress={toggle} />
+            <IconButton
+              name="bell"
+              size={17}
+              badge={(unread.data ?? 0) > 0}
+              onPress={() => router.push('/notifications')}
+            />
+          </View>
         </Animated.View>
 
-        {/* Compact greeting */}
-        <Animated.View entering={FadeInDown.delay(50).springify().damping(30).stiffness(250).mass(0.9)} style={{ paddingHorizontal: 20, marginTop: 18 }}>
-          <Overline color={c.inkFaint}>
-            {new Date().toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' })}
-          </Overline>
-          <Txt size={28} lh={33} weight="extrabold" ls={-0.9} style={{ marginTop: 4 }}>
+        {/* greeting */}
+        <Animated.View entering={FadeInDown.delay(40).springify().damping(30).stiffness(250).mass(0.9)} style={{ paddingHorizontal: 24, marginTop: 20 }}>
+          <Txt size={27} lh={32} weight="extrabold" ls={-0.9}>
             {greeting()}.
           </Txt>
+          <Overline color={c.inkFaint} style={{ marginTop: 5 }}>
+            {new Date().toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' })}
+          </Overline>
         </Animated.View>
 
-        {/* Editorial category tabs */}
+        {/* tabs */}
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
-          contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 16, paddingBottom: 2 }}
+          contentContainerStyle={{ paddingHorizontal: 24, paddingTop: 18, paddingBottom: 4 }}
         >
-          {CHIPS.map((ch) => (
-            <CategoryTab key={ch.label} label={ch.label} active={chip === ch.label} onPress={() => setChip(ch.label)} />
+          {TABS.map((t) => (
+            <CategoryTab key={t.label} label={t.label} active={tab === t.label} onPress={() => setTab(t.label)} />
           ))}
         </ScrollView>
 
         {loading ? (
-          <View style={{ marginTop: 16, gap: 16 }}>
-            <Shimmer style={{ height: 250, marginHorizontal: 20, borderRadius: 22 }} />
-            <Shimmer style={{ height: 180, marginHorizontal: 20, borderRadius: 18 }} />
+          <View style={{ marginTop: 16, gap: 2 }}>
+            <Shimmer style={{ height: 224, marginHorizontal: 24, borderRadius: 22, marginBottom: 18 }} />
+            {[0, 1, 2].map((i) => (
+              <Shimmer key={i} style={{ height: 68, marginHorizontal: 24, marginBottom: 14 }} />
+            ))}
           </View>
         ) : (
           <>
-            {/* Top story — one medium card */}
+            {/* one hero */}
             {hero ? (
-              <View style={{ marginTop: 16 }}>
+              <View style={{ marginTop: 14 }}>
                 <TopStoryCard a={hero} />
               </View>
             ) : null}
 
-            {/* Story carousel instead of stacked giants */}
-            {carousel.length > 0 ? (
-              <>
-                <SectionHeader title="Top Stories" style={{ marginTop: 30 }} />
-                <ScrollView
-                  horizontal
-                  showsHorizontalScrollIndicator={false}
-                  snapToInterval={274}
-                  decelerationRate="fast"
-                  contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 8 }}
-                >
-                  {carousel.map((a, i) => (
-                    <RecommendCard key={a.id} a={a} index={i} />
-                  ))}
-                </ScrollView>
-              </>
+            {/* one-line breaking strip */}
+            {showBreaking ? (
+              <Animated.View entering={FadeInDown.delay(80).springify().damping(30).stiffness(250).mass(0.9)}>
+                <Press onPress={() => router.push(`/article/${breaking!.id}`)} style={s.breakingStrip}>
+                  <PulseDot />
+                  <Txt size={13.5} weight="semibold" numberOfLines={1} style={{ flex: 1 }}>
+                    {breaking!.title}
+                  </Txt>
+                  <Txt size={11.5} weight="semibold" color={c.breaking} ls={0.6}>
+                    LIVE
+                  </Txt>
+                </Press>
+              </Animated.View>
             ) : null}
 
-            {/* Trending — editorial numbered list */}
-            <SectionHeader title="Trending Now" style={{ marginTop: 34 }} />
-            <View>
-              {(trending.data ?? []).slice(0, 4).map((a, i) => (
-                <TrendingRow key={a.id} a={a} rank={i + 1} />
+            {/* the feed — one ranked list, nothing else */}
+            <View style={{ marginTop: 10 }}>
+              {list.map((a, i) => (
+                <ArticleRow key={a.id} a={a} index={i} />
+              ))}
+              {older.map((a, i) => (
+                <ArticleRow key={a.id} a={a} index={i} divider={i < older.length - 1} />
               ))}
             </View>
-
-            {/* Continue Reading */}
-            {continueReading.data?.length ? (
-              <>
-                <SectionHeader title="Continue Reading" style={{ marginTop: 34 }} />
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 8 }}>
-                  {continueReading.data.map((a, i) => (
-                    <RecommendCard key={a.id} a={a} index={i} />
-                  ))}
-                </ScrollView>
-              </>
-            ) : null}
-
-            {/* Because you read X */}
-            {becauseYou.length > 0 ? (
-              <>
-                <SectionHeader
-                  title={topTopics.length ? `Because you read ${topTopics[0]}` : 'Recommended for You'}
-                  style={{ marginTop: 34 }}
-                />
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 8 }}>
-                  {becauseYou.map((a, i) => (
-                    <RecommendCard key={a.id} a={a} index={i} />
-                  ))}
-                </ScrollView>
-              </>
-            ) : null}
-
-            {/* Quick reads */}
-            {quickReads.length > 0 ? (
-              <>
-                <SectionHeader title="Quick Reads" style={{ marginTop: 34 }} />
-                <View>
-                  {quickReads.map((a, i) => (
-                    <ArticleRow key={a.id} a={a} index={i} />
-                  ))}
-                </View>
-              </>
-            ) : null}
-
-            {more.length > 0 ? (
-              <>
-                <SectionHeader title="More stories" style={{ marginTop: 26 }} />
-                {more.map((a, i) => (
-                  <ArticleRow key={a.id} a={a} index={i} />
-                ))}
-              </>
-            ) : null}
           </>
         )}
       </ScrollView>
@@ -241,16 +224,35 @@ export default function Home() {
   );
 }
 
+function PulseDot() {
+  const v = useSharedValue(1);
+  useEffect(() => {
+    v.value = withRepeat(withSequence(withTiming(0.4, { duration: 700 }), withTiming(1, { duration: 700 })), -1);
+  }, [v]);
+  const a = useAnimatedStyle(() => ({ opacity: v.value }));
+  return <Animated.View style={[s.pulseDot, a]} />;
+}
+
 const s = StyleSheet.create({
   topBar: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 20,
+    paddingLeft: 24,
+    paddingRight: 14,
   },
-  wordmark: {
-    flex: 1,
-    height: 26,
-    marginHorizontal: 12,
+  breakingStrip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginHorizontal: 24,
+    marginTop: 16,
+    paddingVertical: 4,
+  },
+  pulseDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#FF3B30',
   },
 });

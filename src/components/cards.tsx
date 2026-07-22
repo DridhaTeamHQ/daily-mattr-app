@@ -129,56 +129,57 @@ export function ArticleRow({
   showTopic = true,
   index = 0,
   divider = true,
+  variant = 'plain',
 }: {
   a: Article;
   showTopic?: boolean;
   index?: number;
   divider?: boolean;
+  variant?: 'card' | 'plain';
 }) {
   const router = useRouter();
-  const { isSaved, toggleSaved } = useStore();
   const { c, isDark } = useTheme();
-  const saved = isSaved(a.id);
-  const t = topicOf(a.topic);
   useEffect(() => trackImpression(a.id, a.topic), [a.id, a.topic]);
 
-  return (
-    <Animated.View entering={FadeInDown.delay(Math.min(index, 6) * 60).springify().damping(30).stiffness(250).mass(0.9)}>
-      <Press onPress={() => router.push(`/article/${a.id}`)} style={[s.row, isDark ? null : shadow.soft, glassCard(c, isDark)]}>
-        <View style={{ flex: 1, paddingRight: 16 }}>
-          <CardTitle numberOfLines={2}>{a.title}</CardTitle>
-          <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 9 }}>
-            {showTopic ? (
-              <>
-                <Txt size={12.5} weight="semibold" color={colors.brand}>
-                  {a.topic}
-                </Txt>
-                <View style={s.metaDot} />
-              </>
-            ) : null}
-            <Txt size={12.5} weight="medium" color={colors.inkFaint}>
-              {a.readMins} min read
+  if (variant === 'card') {
+    return (
+      <Animated.View entering={FadeInDown.delay(Math.min(index, 6) * 50).springify().damping(30).stiffness(250).mass(0.9)}>
+        <Press onPress={() => router.push(`/article/${a.id}`)} style={[s.row, isDark ? null : shadow.soft, glassCard(c, isDark)]}>
+          <View style={{ flex: 1, paddingRight: 16 }}>
+            <CardTitle numberOfLines={2}>{a.title}</CardTitle>
+            <Txt size={12} weight="medium" color={c.inkFaint} style={{ marginTop: 8 }}>
+              {showTopic ? `${a.topic} · ` : ''}
+              {timeAgo(a.publishedAt)} · {a.readMins} min
             </Txt>
-            <View style={s.metaDot} />
-            <Press
-              haptic={false}
-              scaleTo={0.9}
-              onPress={() => {
-                soft();
-                toggleSaved(a.id, a.topic);
-              }}
-              style={{ padding: 4, margin: -4 }}
-            >
-              <LIcon name="bookmark" size={15} color={saved ? colors.brand : colors.inkFaint} fill={saved ? colors.brand : 'none'} />
-            </Press>
           </View>
+          <Image source={a.imageUrl ? { uri: a.imageUrl } : artFor(a.topic)} style={s.thumb} contentFit="cover" recyclingKey={a.id} transition={220} />
+        </Press>
+      </Animated.View>
+    );
+  }
+
+  // plain: no box, hairline divider, quiet single-line meta — the calm default
+  return (
+    <Animated.View entering={FadeInDown.delay(Math.min(index, 6) * 50).springify().damping(30).stiffness(250).mass(0.9)}>
+      <Press onPress={() => router.push(`/article/${a.id}`)} style={s.rowPlain}>
+        <View style={{ flex: 1, paddingRight: 16 }}>
+          <Txt size={16} lh={22} weight="bold" ls={-0.3} numberOfLines={3}>
+            {a.title}
+          </Txt>
+          <Txt size={12} weight="medium" color={c.inkFaint} style={{ marginTop: 7 }}>
+            {showTopic ? `${a.topic} · ` : ''}
+            {timeAgo(a.publishedAt)} · {a.readMins} min
+          </Txt>
         </View>
-        {a.imageUrl ? (
-          <Image source={{ uri: a.imageUrl }} style={s.thumb} contentFit="cover" recyclingKey={a.id} transition={220} />
-        ) : (
-          <Image source={artFor(a.topic)} style={s.thumb} contentFit="cover" transition={220} />
-        )}
+        <Image
+          source={a.imageUrl ? { uri: a.imageUrl } : artFor(a.topic)}
+          style={s.thumbPlain}
+          contentFit="cover"
+          recyclingKey={a.id}
+          transition={220}
+        />
       </Press>
+      {divider ? <View style={[s.hairline, { backgroundColor: c.divider }]} /> : null}
     </Animated.View>
   );
 }
@@ -270,9 +271,9 @@ const s = StyleSheet.create({
     backgroundColor: colors.dark,
   },
   topStory: {
-    width: W - 40,
-    height: 250,
-    marginHorizontal: 20,
+    width: W - 48,
+    height: 224,
+    marginHorizontal: 24,
     borderRadius: radius.lg,
     overflow: 'hidden',
     backgroundColor: colors.dark,
@@ -304,7 +305,19 @@ const s = StyleSheet.create({
     marginHorizontal: 20,
     marginBottom: 12,
   },
+  rowPlain: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 24,
+    paddingVertical: 17,
+  },
+  hairline: {
+    height: StyleSheet.hairlineWidth,
+    marginLeft: 24,
+    marginRight: 24,
+  },
   thumb: { width: 88, height: 88, borderRadius: 18 },
+  thumbPlain: { width: 68, height: 68, borderRadius: 14 },
   recCard: {
     width: 258,
     borderRadius: radius.lg,
