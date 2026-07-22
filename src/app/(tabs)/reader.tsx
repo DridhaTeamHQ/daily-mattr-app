@@ -19,6 +19,8 @@ import Animated, {
   Extrapolation,
   useAnimatedReaction,
   runOnJS,
+  withTiming,
+  Easing,
   type SharedValue,
 } from 'react-native-reanimated';
 import { colors, radius, spring, topicOf } from '@/theme';
@@ -62,6 +64,30 @@ export default function Reader() {
   const dialStyle = useAnimatedStyle(() => ({
     opacity: drawer.value,
     transform: [{ scale: interpolate(drawer.value, [0, 1], [1.06, 1]) }],
+  }));
+
+  // bubble bloom: tapped bubble expands + fades, revealing the deck
+  const reveal = useSharedValue(0);
+  const [revealTopic, setRevealTopic] = useState<string | null | undefined>(undefined);
+  const finishReveal = () => {
+    setDrawerOpen(false);
+    drawer.value = 0;
+    setRevealTopic(undefined);
+    reveal.value = 0;
+  };
+  const handleDialSelect = (t: string | null) => {
+    soft();
+    setTopicFilter(t);
+    setRevealTopic(t);
+    reveal.value = withTiming(1, { duration: 560, easing: Easing.bezier(0.3, 0, 0.2, 1) }, (f) => {
+      if (f) runOnJS(finishReveal)();
+    });
+  };
+  const backdropFade = useAnimatedStyle(() => ({ opacity: 1 - reveal.value }));
+  const wheelFade = useAnimatedStyle(() => ({ opacity: Math.max(0, 1 - reveal.value * 2.2) }));
+  const bubbleBloom = useAnimatedStyle(() => ({
+    opacity: interpolate(reveal.value, [0, 0.55, 1], [1, 0.8, 0]),
+    transform: [{ scale: interpolate(reveal.value, [0, 1], [1, 9]) }],
   }));
   const [measuredH, setMeasuredH] = useState(0);
   // Hidden tab screens can measure 0 on web; fall back to the window height.
@@ -209,27 +235,42 @@ export default function Reader() {
         style={[StyleSheet.absoluteFill, dialStyle]}
         pointerEvents={drawerOpen ? 'auto' : 'none'}
       >
-        <Press onPress={() => openDrawer(false)} haptic={false} style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(5,8,14,0.92)' }]}>
-          <View />
-        </Press>
-        <View pointerEvents="none" style={{ position: 'absolute', top: insets.top + 22, left: 0, right: 0, alignItems: 'center' }}>
-          <Txt size={19} weight="extrabold" color="#fff" ls={-0.5}>
-            Topics
-          </Txt>
-          <Txt size={12} weight="medium" color="rgba(255,255,255,0.45)" style={{ marginTop: 3 }}>
-            drag to spin · tap to choose
-          </Txt>
-        </View>
-        {/* fixed center ring the dial snaps into */}
-        <View pointerEvents="none" style={st.centerRing} />
-        <TopicWheel
-          selected={topicFilter}
-          onSelect={(t) => {
-            setTopicFilter(t);
-            openDrawer(false);
-          }}
-          brand={c.brand}
-        />
+        <Animated.View style={[StyleSheet.absoluteFill, backdropFade]}>
+          <Press onPress={() => openDrawer(false)} haptic={false} style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(5,8,14,0.92)' }]}>
+            <View />
+          </Press>
+        </Animated.View>
+        <Animated.View
+          style={[StyleSheet.absoluteFill, wheelFade]}
+          pointerEvents={revealTopic === undefined ? 'box-none' : 'none'}
+        >
+          <View pointerEvents="none" style={{ position: 'absolute', top: insets.top + 22, left: 0, right: 0, alignItems: 'center' }}>
+            <Txt size={19} weight="extrabold" color="#fff" ls={-0.5}>
+              Topics
+            </Txt>
+            <Txt size={12} weight="medium" color="rgba(255,255,255,0.45)" style={{ marginTop: 3 }}>
+              drag to spin · tap to choose
+            </Txt>
+          </View>
+          {/* fixed center ring the dial snaps into */}
+          <View pointerEvents="none" style={st.centerRing} />
+          <TopicWheel selected={topicFilter} onSelect={handleDialSelect} brand={c.brand} />
+        </Animated.View>
+        {/* the chosen bubble blooms over the screen, then dissolves */}
+        {revealTopic !== undefined ? (
+          <Animated.View pointerEvents="none" style={[st.bloomWrap, bubbleBloom]}>
+            {revealTopic === null ? (
+              <View style={[st.forYouBubble, { backgroundColor: c.brand }]}>
+                <LIcon name="sparkles" size={22} color="#fff" strokeWidth={2.2} />
+                <Txt size={12.5} weight="bold" color="#fff" style={{ marginTop: 4 }}>
+                  For You
+                </Txt>
+              </View>
+            ) : (
+              <TopicBubble topic={revealTopic} size={92} />
+            )}
+          </Animated.View>
+        ) : null}
       </Animated.View>
     </View>
   );
@@ -295,7 +336,7 @@ function TopicWheel({
               <Press
                 haptic={false}
                 onPress={() => {
-                  scrollRef.current?.scrollTo({ y: i * WHEEL_ROW, animated: true });
+                  scrollRef.current?.scrollTo({ y: i * WHEEL_ROW, animated: false });
                   onSelect(t);
                 }}
                 scaleTo={0.94}
@@ -340,6 +381,15 @@ function WheelRow({ index, wheelY, children }: { index: number; wheelY: SharedVa
 }
 
 const st = StyleSheet.create({
+  bloomWrap: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    top: 0,
+    bottom: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   centerRing: {
     position: 'absolute',
     top: '50%',
