@@ -17,7 +17,6 @@ type TabBarProps = { state: any; navigation: any };
 
 const TABS: Record<string, { icon: string; label: string }> = {
   index: { icon: 'house', label: 'Home' },
-  categories: { icon: 'layout-grid', label: 'Categories' },
   reader: { icon: 'layers', label: 'Articles' },
   profile: { icon: 'user-round', label: 'Profile' },
 };

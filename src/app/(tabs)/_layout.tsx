@@ -8,7 +8,6 @@ export default function TabLayout() {
       screenOptions={{ headerShown: false }}
     >
       <Tabs.Screen name="index" options={{ title: 'Home' }} />
-      <Tabs.Screen name="categories" options={{ title: 'Categories' }} />
       <Tabs.Screen name="reader" options={{ title: 'Articles' }} />
       <Tabs.Screen name="profile" options={{ title: 'Profile' }} />
     </Tabs>

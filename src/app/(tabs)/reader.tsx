@@ -18,13 +18,13 @@ import Animated, {
   type SharedValue,
 } from 'react-native-reanimated';
 import { colors, radius, spring, topicOf } from '@/theme';
-import { Txt, Headline, Press, Shimmer, BreakingBadge, EasedScrim, LIcon } from '@/components/ui';
+import { Txt, Headline, Press, Shimmer, BreakingBadge, EasedScrim, LIcon, TopicBubble } from '@/components/ui';
 import { fetchReaderFeed } from '@/lib/queries';
 import { type Article, timeAgo, isBreaking } from '@/lib/content';
 import { useStore } from '@/lib/store';
 import { useTheme } from '@/lib/theme';
 import { track, createDwellTimer, flush as flushTelemetry } from '@/lib/telemetry';
-import { artFor } from '@/lib/topicArt';
+import { artFor, topicArt } from '@/lib/topicArt';
 
 const { width: W } = Dimensions.get('window');
 
@@ -38,17 +38,35 @@ const MODE_META: { key: Mode; label: string; icon: string }[] = [
   { key: 'deep', label: 'Deep dive', icon: 'telescope' },
 ];
 
+const READER_TOPICS = Object.keys(topicArt);
+
 export default function Reader() {
-  const { c } = useTheme();
+  const { c, isDark } = useTheme();
   const insets = useSafeAreaInsets();
   const { height: winH } = useWindowDimensions();
+
+  // topic drawer
+  const [topicFilter, setTopicFilter] = useState<string | null>(null);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const drawer = useSharedValue(0);
+  const openDrawer = (open: boolean) => {
+    tick();
+    setDrawerOpen(open);
+    drawer.value = withSpring(open ? 1 : 0, spring.snappy);
+  };
+  const drawerStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: interpolate(drawer.value, [0, 1], [260, 0]) }],
+  }));
+  const backdropStyle = useAnimatedStyle(() => ({
+    opacity: drawer.value * 0.55,
+  }));
   const [measuredH, setMeasuredH] = useState(0);
   // Hidden tab screens can measure 0 on web; fall back to the window height.
   const pageH = measuredH > 100 ? measuredH : winH;
   const scrollY = useSharedValue(0);
   const { data, isLoading, error, refetch } = useQuery({
-    queryKey: ['readerFeed'],
-    queryFn: () => fetchReaderFeed(40),
+    queryKey: ['readerFeed', topicFilter],
+    queryFn: () => fetchReaderFeed(40, topicFilter ? [topicFilter] : undefined),
   });
   const [extra, setExtra] = useState<Article[]>([]);
   const loadingMore = useRef(false);
@@ -57,12 +75,16 @@ export default function Reader() {
     return [...(data ?? []), ...extra.filter((a) => !seenIds.has(a.id))];
   }, [data, extra]);
 
+  React.useEffect(() => {
+    setExtra([]);
+  }, [topicFilter]);
+
   const loadMore = useCallback(async () => {
     if (loadingMore.current) return;
     loadingMore.current = true;
     try {
       await flushTelemetry(); // impressions raise seen_count so the next batch differs
-      const next = await fetchReaderFeed(40);
+      const next = await fetchReaderFeed(40, topicFilter ? [topicFilter] : undefined);
       setExtra((prev) => {
         const have = new Set([...(data ?? []), ...prev].map((a) => a.id));
         return [...prev, ...next.filter((a) => !have.has(a.id))];
@@ -132,6 +154,7 @@ export default function Reader() {
     <View style={{ flex: 1, backgroundColor: c.bg }} onLayout={(e) => setMeasuredH(e.nativeEvent.layout.height)}>
       {pageH > 0 ? (
         <Animated.FlatList
+          key={topicFilter ?? 'foryou'}
           data={feedItems}
           keyExtractor={(a: Article) => a.id}
           renderItem={({ item, index }) => (
@@ -159,9 +182,134 @@ export default function Reader() {
           windowSize={5}
         />
       ) : null}
+
+      {/* topics trigger */}
+      <Press
+        onPress={() => openDrawer(true)}
+        scaleTo={0.88}
+        style={[st.topicsBtn, { top: insets.top + 10 }]}
+      >
+        <LIcon name="layout-grid" size={17} color="#fff" strokeWidth={2.2} />
+      </Press>
+      {topicFilter ? (
+        <View style={[st.filterTag, { top: insets.top + 58 }]}>
+          <Txt size={11.5} weight="bold" color="#fff">
+            {topicFilter}
+          </Txt>
+        </View>
+      ) : null}
+
+      {/* backdrop */}
+      {drawerOpen ? (
+        <Animated.View style={[StyleSheet.absoluteFill, { backgroundColor: '#05070C' }, backdropStyle]}>
+          <Press onPress={() => openDrawer(false)} haptic={false} style={{ flex: 1 }}>
+            <View />
+          </Press>
+        </Animated.View>
+      ) : null}
+
+      {/* side drawer */}
+      <Animated.View
+        style={[
+          st.drawer,
+          drawerStyle,
+          {
+            paddingTop: insets.top + 18,
+            backgroundColor: isDark ? 'rgba(16,22,36,0.98)' : 'rgba(255,255,255,0.98)',
+            borderLeftColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(11,13,18,0.06)',
+          },
+        ]}
+        pointerEvents={drawerOpen ? 'auto' : 'none'}
+      >
+        <Txt size={19} weight="extrabold" ls={-0.5} style={{ paddingHorizontal: 20, marginBottom: 14 }}>
+          Topics
+        </Txt>
+        <RNScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 40 }}>
+          <Press
+            onPress={() => {
+              setTopicFilter(null);
+              openDrawer(false);
+            }}
+            style={[st.drawerRow, topicFilter === null ? { backgroundColor: c.brandSubtle } : null]}
+          >
+            <View style={[st.forYouDot, { backgroundColor: c.brand }]}>
+              <LIcon name="sparkles" size={15} color="#fff" strokeWidth={2.2} />
+            </View>
+            <Txt size={14} weight={topicFilter === null ? 'bold' : 'medium'} color={topicFilter === null ? c.brand : c.ink}>
+              For You
+            </Txt>
+          </Press>
+          {READER_TOPICS.map((t) => {
+            const on = topicFilter === t;
+            return (
+              <Press
+                key={t}
+                onPress={() => {
+                  setTopicFilter(t);
+                  openDrawer(false);
+                }}
+                style={[st.drawerRow, on ? { backgroundColor: c.brandSubtle } : null]}
+              >
+                <TopicBubble topic={t} size={40} label=" " />
+                <Txt size={14} weight={on ? 'bold' : 'medium'} color={on ? c.brand : c.ink} style={{ flex: 1 }}>
+                  {t}
+                </Txt>
+                {on ? <LIcon name="check" size={15} color={c.brand} strokeWidth={2.6} /> : null}
+              </Press>
+            );
+          })}
+        </RNScrollView>
+      </Animated.View>
     </View>
   );
 }
+
+const st = StyleSheet.create({
+  topicsBtn: {
+    position: 'absolute',
+    right: 18,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(11,13,18,0.38)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  filterTag: {
+    position: 'absolute',
+    right: 18,
+    backgroundColor: 'rgba(57,121,255,0.9)',
+    borderRadius: 999,
+    paddingHorizontal: 11,
+    paddingVertical: 5,
+  },
+  drawer: {
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    right: 0,
+    width: 248,
+    borderLeftWidth: 1,
+    boxShadow: '-16px 0 44px rgba(0,0,0,0.4)',
+  },
+  drawerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    marginHorizontal: 8,
+    borderRadius: 14,
+    marginBottom: 2,
+  },
+  forYouDot: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+})
 
 /* Pages visibly hand off: leaving page scales to 0.94 and dims */
 function PageShell({ index, pageH, scrollY, children }: { index: number; pageH: number; scrollY: SharedValue<number>; children: React.ReactNode }) {
@@ -443,7 +591,7 @@ const s = StyleSheet.create({
   cardTop: {
     position: 'absolute',
     left: 18,
-    right: 18,
+    right: 66,
     flexDirection: 'row',
     justifyContent: 'space-between',
   },

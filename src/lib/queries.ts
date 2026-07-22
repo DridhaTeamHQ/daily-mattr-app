@@ -33,8 +33,22 @@ function diversify(list: Article[]): Article[] {
 }
 
 // Reader stream for the Articles tab — includes the versions payload
-// (ELI5 / TL;DR / key numbers / deep dive).
-export async function fetchReaderFeed(limit = 40): Promise<Article[]> {
+// (ELI5 / TL;DR / key numbers / deep dive). With `topics` set it becomes a
+// recency-ordered topic deck instead of the personalized ranking.
+export async function fetchReaderFeed(limit = 40, topics?: string[]): Promise<Article[]> {
+  if (topics?.length) {
+    const { data, error } = await supabase
+      .from('articles')
+      .select(ARTICLE_COLS + ',versions')
+      .in('status', PUBLISHED)
+      .in('topic', expandTopics(topics))
+      .order('reviewed_at', { ascending: false, nullsFirst: false })
+      .order('scraped_at', { ascending: false })
+      .limit(limit);
+    if (error) throw error;
+    return (data ?? []).map(mapArticle);
+  }
+
   const deviceId = await getDeviceId();
   const { data, error } = await supabase.rpc('app_get_feed', {
     p_device_id: deviceId,
