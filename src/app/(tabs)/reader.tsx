@@ -1,5 +1,6 @@
 import React, { useCallback, useMemo, useRef, useState } from 'react';
-import { View, StyleSheet, Dimensions, Share, ScrollView as RNScrollView, LayoutChangeEvent, useWindowDimensions } from 'react-native';
+import { View, StyleSheet, Dimensions, Share, ScrollView as RNScrollView, LayoutChangeEvent, useWindowDimensions, Platform } from 'react-native';
+import MaskedView from '@react-native-masked-view/masked-view';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useQuery } from '@tanstack/react-query';
 import { Image } from 'expo-image';
@@ -377,10 +378,19 @@ function ReaderCard({ a, height, topInset }: { a: Article; height: number; topIn
   const imgSource = a.imageUrl ? { uri: a.imageUrl } : artFor(a.topic);
   // ambient glass: the article's own image, heavily blurred, becomes the
   // card's backdrop so its palette bleeds through the whole surface
-  const tint = isDark ? 'rgba(8,11,20,0.82)' : 'rgba(247,249,252,0.92)';
-  const meltStops = isDark
-    ? ['rgba(8,11,20,0)', 'rgba(8,11,20,0.28)', 'rgba(8,11,20,0.62)', 'rgba(8,11,20,0.86)']
-    : ['rgba(247,249,252,0)', 'rgba(247,249,252,0.32)', 'rgba(247,249,252,0.68)', 'rgba(247,249,252,0.94)'];
+  const tint = isDark ? 'rgba(8,11,20,0.74)' : 'rgba(247,249,252,0.88)';
+  // sharp image dissolves via a TRUE alpha mask — no bands, no seams
+  const fadeH = imgH + 120;
+
+  const sharpLayers = (
+    <>
+      <Image source={imgSource} style={{ width: '100%', height: fadeH }} contentFit="cover" recyclingKey={a.id} transition={280} />
+      {a.imageUrl ? (
+        <LinearGradient colors={[t.wash, 'rgba(0,0,0,0)']} style={StyleSheet.absoluteFill} />
+      ) : null}
+      <EasedScrim variant="top" style={{ position: 'absolute', left: 0, right: 0, top: 0, height: imgH * 0.5 }} />
+    </>
+  );
 
   return (
     <View style={{ height, backgroundColor: c.bg, overflow: 'hidden' }}>
@@ -394,39 +404,55 @@ function ReaderCard({ a, height, topInset }: { a: Article; height: number; topIn
       />
       <View style={[StyleSheet.absoluteFill, { backgroundColor: tint }]} />
 
-      {/* sharp image melts into the ambient backdrop */}
-      <View style={{ height: imgH }}>
-        {a.imageUrl ? (
-          <>
-            <Image source={{ uri: a.imageUrl }} style={StyleSheet.absoluteFill} contentFit="cover" recyclingKey={a.id} transition={280} />
-            <LinearGradient colors={[t.wash, 'rgba(0,0,0,0)']} style={StyleSheet.absoluteFill} />
-          </>
+      {Platform.OS === 'web' ? (
+        // web fallback: translucent gradient melt (masked-view is native-only)
+        <View style={{ position: 'absolute', top: 0, left: 0, right: 0, height: fadeH, overflow: 'hidden' }}>
+          {sharpLayers}
+          <LinearGradient
+            colors={
+              isDark
+                ? (['rgba(10,14,23,0)', 'rgba(10,14,23,0.45)', 'rgba(10,14,23,0.72)', tint] as any)
+                : (['rgba(247,249,252,0)', 'rgba(247,249,252,0.45)', 'rgba(247,249,252,0.75)', tint] as any)
+            }
+            locations={[0, 0.5, 0.75, 1]}
+            style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: fadeH * 0.62 }}
+          />
+        </View>
+      ) : (
+        <MaskedView
+          style={{ position: 'absolute', top: 0, left: 0, right: 0, height: fadeH }}
+          maskElement={
+            <LinearGradient
+              colors={['#000', '#000', 'rgba(0,0,0,0.4)', 'rgba(0,0,0,0)']}
+              locations={[0, 0.55, 0.8, 1]}
+              style={{ flex: 1 }}
+            />
+          }
+        >
+          {sharpLayers}
+        </MaskedView>
+      )}
+
+      {/* pills live outside the fade so they stay crisp */}
+      <View style={[s.cardTop, { top: topInset + 10 }]}>
+        {isBreaking(a) ? (
+          <BreakingBadge />
         ) : (
-          <Image source={artFor(a.topic)} style={StyleSheet.absoluteFill} contentFit="cover" transition={220} />
-        )}
-        <EasedScrim variant="top" style={{ position: 'absolute', left: 0, right: 0, top: 0, height: imgH * 0.5 }} />
-        <LinearGradient
-          colors={meltStops as any}
-          locations={[0, 0.45, 0.75, 1]}
-          style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: imgH * 0.6 }}
-        />
-        <View style={[s.cardTop, { top: topInset + 10 }]}>
-          {isBreaking(a) ? (
-            <BreakingBadge />
-          ) : (
-            <View style={s.glassPill}>
-              <Txt size={11.5} weight="semibold" color="#fff" ls={0.3}>
-                {a.topic}
-              </Txt>
-            </View>
-          )}
           <View style={s.glassPill}>
-            <Txt size={11.5} weight="medium" color="#fff">
-              {timeAgo(a.publishedAt)}
+            <Txt size={11.5} weight="semibold" color="#fff" ls={0.3}>
+              {a.topic}
             </Txt>
           </View>
+        )}
+        <View style={s.glassPill}>
+          <Txt size={11.5} weight="medium" color="#fff">
+            {timeAgo(a.publishedAt)}
+          </Txt>
         </View>
       </View>
+
+      {/* spacer keeps content flow aligned with the absolute image */}
+      <View style={{ height: imgH }} />
 
       <View style={{ flex: 1, paddingHorizontal: 24, marginTop: -34 }}>
         <Headline numberOfLines={3} style={{ fontSize: 25, lineHeight: 31 }}>
