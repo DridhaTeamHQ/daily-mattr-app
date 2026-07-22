@@ -383,7 +383,7 @@ function ReaderCard({ a, height, topInset }: { a: Article; height: number; topIn
   const imgSource = a.imageUrl ? { uri: a.imageUrl } : artFor(a.topic);
   // ambient glass: the article's own image, heavily blurred, becomes the
   // card's backdrop so its palette bleeds through the whole surface
-  const tint = isDark ? 'rgba(8,11,20,0.74)' : 'rgba(250,251,253,0.55)';
+  const tint = isDark ? 'rgba(8,11,20,0.74)' : 'rgba(255,255,255,0.45)';
   // sharp image dissolves via a TRUE alpha mask — no bands, no seams
   const fadeH = imgH + 120;
 
@@ -417,7 +417,7 @@ function ReaderCard({ a, height, topInset }: { a: Article; height: number; topIn
             colors={
               isDark
                 ? (['rgba(10,14,23,0)', 'rgba(10,14,23,0.45)', 'rgba(10,14,23,0.72)', tint] as any)
-                : (['rgba(250,251,253,0)', 'rgba(250,251,253,0.35)', 'rgba(250,251,253,0.5)', tint] as any)
+                : (['rgba(255,255,255,0)', 'rgba(255,255,255,0.3)', 'rgba(255,255,255,0.45)', tint] as any)
             }
             locations={[0, 0.5, 0.75, 1]}
             style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: fadeH * 0.62 }}
@@ -467,7 +467,7 @@ function ReaderCard({ a, height, topInset }: { a: Article; height: number; topIn
           colors={
             isDark
               ? (['rgba(12,17,29,0)', 'rgba(12,17,29,0.42)', 'rgba(12,17,29,0.62)'] as any)
-              : (['rgba(250,251,253,0)', 'rgba(250,251,253,0.34)', 'rgba(250,251,253,0.52)'] as any)
+              : (['rgba(255,255,255,0)', 'rgba(255,255,255,0.3)', 'rgba(255,255,255,0.46)'] as any)
           }
           locations={[0, 0.14, 0.3]}
           style={StyleSheet.absoluteFill}
