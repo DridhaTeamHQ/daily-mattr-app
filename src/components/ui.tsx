@@ -8,8 +8,11 @@ import Animated, {
   withRepeat,
   withSequence,
   interpolateColor,
+  ZoomIn,
 } from 'react-native-reanimated';
 import { LinearGradient } from 'expo-linear-gradient';
+import { Image } from 'expo-image';
+import { artFor } from '@/lib/topicArt';
 import * as Lucide from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import { tick } from '@/lib/haptics';
@@ -269,6 +272,80 @@ export function CategoryTab({
         ]}
       />
     </Pressable>
+  );
+}
+
+/* ---------- Circular topic bubble (artwork-filled, reference style) ---------- */
+
+export function TopicBubble({
+  topic,
+  size = 96,
+  selected,
+  onPress,
+  label,
+}: {
+  topic: string;
+  size?: number;
+  selected?: boolean;
+  onPress?: () => void;
+  label?: string;
+}) {
+  const { c } = useTheme();
+  const fontSize = Math.max(11.5, Math.min(15, size * 0.14));
+  return (
+    <Press onPress={onPress} scaleTo={0.93} style={{ alignItems: 'center', justifyContent: 'center' }}>
+      <View
+        style={{
+          width: size + 8,
+          height: size + 8,
+          borderRadius: (size + 8) / 2,
+          borderWidth: 2.5,
+          borderColor: selected ? c.brand : 'transparent',
+          alignItems: 'center',
+          justifyContent: 'center',
+        }}
+      >
+        <View style={{ width: size, height: size, borderRadius: size / 2, overflow: 'hidden' }}>
+          <Image source={artFor(topic)} style={{ width: '100%', height: '100%' }} contentFit="cover" transition={200} />
+          <View
+            style={{
+              position: 'absolute',
+              left: 0,
+              right: 0,
+              top: 0,
+              bottom: 0,
+              backgroundColor: selected ? 'rgba(6,10,20,0.28)' : 'rgba(6,10,20,0.44)',
+              alignItems: 'center',
+              justifyContent: 'center',
+              paddingHorizontal: 8,
+            }}
+          >
+            <Txt size={fontSize} weight="bold" color="#fff" ls={-0.2} style={{ textAlign: 'center' }} numberOfLines={2}>
+              {label ?? topic}
+            </Txt>
+          </View>
+        </View>
+        {selected ? (
+          <Animated.View
+            entering={ZoomIn.springify().damping(18).stiffness(260)}
+            style={{
+              position: 'absolute',
+              top: 2,
+              right: 2,
+              width: 24,
+              height: 24,
+              borderRadius: 12,
+              backgroundColor: c.brand,
+              alignItems: 'center',
+              justifyContent: 'center',
+              boxShadow: '0 4px 12px rgba(57,121,255,0.5)',
+            }}
+          >
+            <LIcon name="check" size={13} color="#fff" strokeWidth={3.2} />
+          </Animated.View>
+        ) : null}
+      </View>
+    </Press>
   );
 }
 

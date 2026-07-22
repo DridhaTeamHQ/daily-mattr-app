@@ -8,7 +8,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import Animated, { FadeInDown, FadeIn } from 'react-native-reanimated';
 import { colors, radius, shadow, topicOf } from '@/theme';
 import { useTheme } from '@/lib/theme';
-import { Hero, Txt, Press, SectionHeader, Shimmer, EasedScrim, LIcon } from '@/components/ui';
+import { Hero, Txt, Press, SectionHeader, Shimmer, EasedScrim, LIcon, TopicBubble } from '@/components/ui';
 import { ArticleRow, TrendingRow } from '@/components/cards';
 import { NAVBAR_CLEARANCE } from '@/components/navbar';
 import { fetchTopicStats, fetchTrending, fetchFeed } from '@/lib/queries';
@@ -104,32 +104,18 @@ export default function Categories() {
               })}
             </View>
 
-            {/* All topics — pastel gradient chips */}
+            {/* All topics — artwork bubbles */}
             <SectionHeader title="All Topics" />
-            <View style={s.chipsWrap}>
-              {allTopics.map(([topic, count], i) => {
-                const meta = topicOf(topic);
-                return (
-                  <Animated.View key={topic} entering={FadeInDown.delay(Math.min(i, 8) * 45)}>
-                    <Press onPress={() => setActive(topic)} scaleTo={0.95}>
-                      <LinearGradient
-                        colors={meta.pastel}
-                        start={{ x: 0, y: 0 }}
-                        end={{ x: 1, y: 1 }}
-                        style={s.topicChip}
-                      >
-                        <LIcon name={meta.icon} size={14} color={meta.pastelInk} strokeWidth={2} />
-                        <Txt size={13} weight="semibold" color={meta.pastelInk}>
-                          {topic}
-                        </Txt>
-                        <Txt size={11} weight="medium" color={meta.pastelInk} style={{ opacity: 0.55 }}>
-                          {count}
-                        </Txt>
-                      </LinearGradient>
-                    </Press>
-                  </Animated.View>
-                );
-              })}
+            <View style={s.bubbleWrap}>
+              {allTopics.map(([topic], i) => (
+                <Animated.View
+                  key={topic}
+                  entering={FadeInDown.delay(Math.min(i, 9) * 45).springify().damping(30).stiffness(250).mass(0.9)}
+                  style={{ marginTop: [0, 16, 6, 20, 2, 12][i % 6], marginHorizontal: 2 }}
+                >
+                  <TopicBubble topic={topic} size={[102, 84, 92, 108, 82, 96][i % 6]} onPress={() => setActive(topic)} />
+                </Animated.View>
+              ))}
             </View>
 
             <SectionHeader title="Trending Today" />
@@ -162,11 +148,12 @@ const s = StyleSheet.create({
     gap: 12,
   },
   tile: { borderRadius: radius.lg, overflow: 'hidden', backgroundColor: colors.dark },
-  chipsWrap: {
+  bubbleWrap: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    paddingHorizontal: 24,
-    gap: 9,
+    justifyContent: 'center',
+    alignItems: 'flex-start',
+    paddingHorizontal: 12,
   },
   topicChip: {
     flexDirection: 'row',

@@ -8,8 +8,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import Animated, { FadeInDown, FadeIn, ZoomIn } from 'react-native-reanimated';
 import { radius, shadow } from '@/theme';
 import { useTheme } from '@/lib/theme';
-import { Txt, Press, EasedScrim, LIcon } from '@/components/ui';
-import { topicArt } from '@/lib/topicArt';
+import { Txt, Press, LIcon, TopicBubble } from '@/components/ui';
 import { supabase } from '@/lib/supabase';
 import { getDeviceId } from '@/lib/telemetry';
 import { tick, soft } from '@/lib/haptics';
@@ -23,6 +22,10 @@ const TOPICS = [
   'Science', 'Markets & Startups', 'Health & Wellness', 'Automobile',
   'Real Estate', 'Explained',
 ];
+
+// varied diameters + vertical offsets give the cluster its organic feel
+const BUBBLE_SIZES = [116, 88, 102, 122, 86, 104, 92, 118, 90, 100, 86, 108];
+const BUBBLE_LIFTS = [0, 22, 8, -4, 26, 4, 18, -2, 20, 6, 24, 2];
 
 export default function Onboarding() {
   const insets = useSafeAreaInsets();
@@ -109,30 +112,18 @@ export default function Onboarding() {
               </Txt>
             </Animated.View>
 
-            <View style={s.grid}>
+            {/* organic circle cluster — varied sizes + offsets */}
+            <View style={s.cluster}>
               {TOPICS.map((t, i) => {
-                const on = picked.includes(t);
+                const size = BUBBLE_SIZES[i % BUBBLE_SIZES.length];
+                const lift = BUBBLE_LIFTS[i % BUBBLE_LIFTS.length];
                 return (
-                  <Animated.View key={t} entering={FadeInDown.delay(Math.min(i, 8) * 60).springify().damping(30).stiffness(250).mass(0.9)}>
-                    <Press onPress={() => togglePick(t)} scaleTo={0.96} style={[s.tile, on ? s.tileOn : null, shadow.soft]}>
-                      <Image source={topicArt[t]} style={StyleSheet.absoluteFill} contentFit="cover" transition={200} />
-                      <EasedScrim variant="bottom" />
-                      {on ? <View style={s.tileOverlay} /> : null}
-                      <View style={s.tileCheck}>
-                        {on ? (
-                          <Animated.View entering={ZoomIn.springify().damping(16)}>
-                            <View style={s.checkOn}>
-                              <LIcon name="check" size={13} color="#fff" strokeWidth={3} />
-                            </View>
-                          </Animated.View>
-                        ) : (
-                          <View style={s.checkOff} />
-                        )}
-                      </View>
-                      <Txt size={15} weight="bold" color="#fff" ls={-0.3} style={s.tileLabel}>
-                        {t}
-                      </Txt>
-                    </Press>
+                  <Animated.View
+                    key={t}
+                    entering={FadeInDown.delay(Math.min(i, 9) * 55).springify().damping(30).stiffness(250).mass(0.9)}
+                    style={{ marginTop: lift, marginHorizontal: 2 }}
+                  >
+                    <TopicBubble topic={t} size={size} selected={picked.includes(t)} onPress={() => togglePick(t)} />
                   </Animated.View>
                 );
               })}
@@ -183,49 +174,14 @@ const s = StyleSheet.create({
     justifyContent: 'center',
     gap: 8,
   },
-  grid: {
+  cluster: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 12,
-    paddingHorizontal: 22,
-    marginTop: 26,
-  },
-  tile: {
-    width: TILE,
-    height: TILE * 0.78,
-    borderRadius: radius.lg,
-    overflow: 'hidden',
-    backgroundColor: '#0E1524',
-  },
-  tileOn: {
-    borderWidth: 2,
-    borderColor: '#4D88FF',
-  },
-  tileOverlay: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    top: 0,
-    bottom: 0,
-    backgroundColor: 'rgba(57,121,255,0.18)',
-  },
-  tileCheck: { position: 'absolute', top: 10, right: 10 },
-  checkOn: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    backgroundColor: '#3979FF',
-    alignItems: 'center',
     justifyContent: 'center',
+    alignItems: 'flex-start',
+    paddingHorizontal: 12,
+    marginTop: 20,
   },
-  checkOff: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    borderWidth: 1.5,
-    borderColor: 'rgba(255,255,255,0.6)',
-  },
-  tileLabel: { position: 'absolute', left: 12, right: 12, bottom: 10 },
   bottomBar: {
     position: 'absolute',
     left: 0,
