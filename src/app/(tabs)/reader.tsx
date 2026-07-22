@@ -20,7 +20,7 @@ import Animated, {
   type SharedValue,
 } from 'react-native-reanimated';
 import { colors, radius, spring, topicOf } from '@/theme';
-import { Txt, Headline, Press, Shimmer, BreakingBadge, EasedScrim, LIcon, TopicBubble } from '@/components/ui';
+import { Txt, Headline, Press, Shimmer, BreakingBadge, EasedScrim, LIcon, TopicBubble, CategoryTab } from '@/components/ui';
 import { fetchReaderFeed } from '@/lib/queries';
 import { type Article, timeAgo, isBreaking } from '@/lib/content';
 import { useStore } from '@/lib/store';
@@ -347,33 +347,8 @@ function ReaderCard({ a, height, topInset }: { a: Article; height: number; topIn
     return MODE_META.filter((m) => avail.includes(m.key));
   }, [a.modes]);
 
-  /* sliding pill indicator across the mode chips */
-  const layouts = useRef<Record<string, { x: number; w: number }>>({});
-  const pillX = useSharedValue(0);
-  const pillW = useSharedValue(0);
-  const pillStyle = useAnimatedStyle(() => ({
-    transform: [{ translateX: pillX.value }],
-    width: pillW.value,
-    opacity: pillW.value > 0 ? 1 : 0,
-  }));
-
-  const onChipLayout = (key: Mode) => (e: LayoutChangeEvent) => {
-    const { x, width } = e.nativeEvent.layout;
-    layouts.current[key] = { x, w: width };
-    if (key === mode && pillW.value === 0) {
-      pillX.value = x;
-      pillW.value = width;
-    }
-  };
-
   const switchMode = (m: Mode) => {
-    tick();
     setMode(m);
-    const l = layouts.current[m];
-    if (l) {
-      pillX.value = withSpring(l.x, spring.snappy);
-      pillW.value = withSpring(l.w, spring.snappy);
-    }
     recordRead(a.id, a.topic);
     track({ article_id: a.id, event_type: 'mode_switch', topic: a.topic, meta: { mode: m } });
   };
@@ -478,23 +453,16 @@ function ReaderCard({ a, height, topInset }: { a: Article; height: number; topIn
           {a.title}
         </Headline>
 
-        {/* mode switcher with sliding pill */}
-        <View style={{ marginTop: 16 }}>
-          <RNScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ position: 'relative' }} style={{ flexGrow: 0 }}>
-            <Animated.View style={[s.modePill, pillStyle]} />
-            {modes.map((m) => {
-              const activeM = mode === m.key;
-              return (
-                <Press key={m.key} haptic={false} onPress={() => switchMode(m.key)} onLayout={onChipLayout(m.key)} style={[s.modeChip, { backgroundColor: 'transparent' }]}>
-                  <LIcon name={m.icon} size={13.5} color={activeM ? '#fff' : c.inkSoft} strokeWidth={2} />
-                  <Txt size={12.5} weight="semibold" color={activeM ? '#fff' : c.inkSoft}>
-                    {m.label}
-                  </Txt>
-                </Press>
-              );
-            })}
-          </RNScrollView>
-        </View>
+        {/* mode switcher — editorial text tabs, no pills */}
+        <RNScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={{ flexGrow: 0, marginTop: 10 }}
+        >
+          {modes.map((m) => (
+            <CategoryTab key={m.key} label={m.label} active={mode === m.key} onPress={() => switchMode(m.key)} />
+          ))}
+        </RNScrollView>
 
         <Animated.View key={mode} entering={FadeInDown.duration(300).springify().damping(30).stiffness(250).mass(0.9)} style={{ flex: 1, marginTop: 16 }}>
           <ModeContent a={a} mode={mode} />
@@ -676,24 +644,6 @@ const s = StyleSheet.create({
     borderRadius: radius.pill,
     paddingHorizontal: 13,
     paddingVertical: 7,
-  },
-  modePill: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    height: 36,
-    borderRadius: radius.pill,
-    backgroundColor: colors.brand,
-    boxShadow: '0 6px 18px rgba(57,121,255,0.35)',
-  },
-  modeChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 14,
-    height: 36,
-    borderRadius: radius.pill,
-    marginRight: 4,
   },
   tldrNum: {
     width: 24,
