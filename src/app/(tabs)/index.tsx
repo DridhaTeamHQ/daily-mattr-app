@@ -157,14 +157,17 @@ export default function Home() {
           </View>
         </Animated.View>
 
-        {/* display headline */}
+        {/* display headline — skew lives on an inner plain View so the
+            entering animation can't clobber the transform */}
         <Animated.View
           entering={FadeInDown.delay(40).springify().damping(30).stiffness(250).mass(0.9)}
-          style={{ paddingHorizontal: 24, marginTop: 22, transform: [{ skewX: '-6deg' }] }}
+          style={{ paddingHorizontal: 24, marginTop: 22 }}
         >
-          <Txt size={38} lh={42} weight="extrabold" ls={-1.2} style={{ textTransform: 'uppercase' }}>
-            {"What's new\ntoday?"}
-          </Txt>
+          <View style={{ transform: [{ skewX: '-6deg' }] }}>
+            <Txt size={38} lh={42} weight="extrabold" ls={-1.2} style={{ textTransform: 'uppercase' }}>
+              {"What's new\ntoday?"}
+            </Txt>
+          </View>
         </Animated.View>
 
         {/* tabs */}
