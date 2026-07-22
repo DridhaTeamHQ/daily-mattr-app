@@ -374,9 +374,27 @@ function ReaderCard({ a, height, topInset }: { a: Article; height: number; topIn
 
   const imgH = Math.max(height * 0.36, 240);
 
+  const imgSource = a.imageUrl ? { uri: a.imageUrl } : artFor(a.topic);
+  // ambient glass: the article's own image, heavily blurred, becomes the
+  // card's backdrop so its palette bleeds through the whole surface
+  const tint = isDark ? 'rgba(8,11,20,0.82)' : 'rgba(247,249,252,0.92)';
+  const meltStops = isDark
+    ? ['rgba(8,11,20,0)', 'rgba(8,11,20,0.28)', 'rgba(8,11,20,0.62)', 'rgba(8,11,20,0.86)']
+    : ['rgba(247,249,252,0)', 'rgba(247,249,252,0.32)', 'rgba(247,249,252,0.68)', 'rgba(247,249,252,0.94)'];
+
   return (
-    <View style={{ height, backgroundColor: c.bg }}>
-      {/* image with topic wash + eased fade into white */}
+    <View style={{ height, backgroundColor: c.bg, overflow: 'hidden' }}>
+      <Image
+        source={imgSource}
+        style={StyleSheet.absoluteFill}
+        contentFit="cover"
+        blurRadius={90}
+        recyclingKey={a.id + '-ambient'}
+        transition={300}
+      />
+      <View style={[StyleSheet.absoluteFill, { backgroundColor: tint }]} />
+
+      {/* sharp image melts into the ambient backdrop */}
       <View style={{ height: imgH }}>
         {a.imageUrl ? (
           <>
@@ -387,7 +405,11 @@ function ReaderCard({ a, height, topInset }: { a: Article; height: number; topIn
           <Image source={artFor(a.topic)} style={StyleSheet.absoluteFill} contentFit="cover" transition={220} />
         )}
         <EasedScrim variant="top" style={{ position: 'absolute', left: 0, right: 0, top: 0, height: imgH * 0.5 }} />
-        <EasedScrim variant="toWhite" style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: imgH * 0.55 }} />
+        <LinearGradient
+          colors={meltStops as any}
+          locations={[0, 0.45, 0.75, 1]}
+          style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: imgH * 0.6 }}
+        />
         <View style={[s.cardTop, { top: topInset + 10 }]}>
           {isBreaking(a) ? (
             <BreakingBadge />
@@ -551,8 +573,10 @@ function ModeContent({ a, mode }: { a: Article; mode: Mode }) {
 
   const text = mode === 'eli5' ? a.modes?.eli5 ?? a.summary : mode === 'deep' ? a.modes?.deepDive ?? a.summary : a.summary;
 
+  // Static — no inner scrolling inside the swipe deck. Long text clamps with
+  // an ellipsis; the open-full action has the rest.
   return (
-    <RNScrollView showsVerticalScrollIndicator={false} nestedScrollEnabled style={{ flex: 1 }}>
+    <View style={{ flex: 1 }}>
       {mode === 'eli5' ? (
         <LinearGradient colors={['#FFE9C2', '#FFD9A3']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={s.eli5Tag}>
           <Txt size={10.5} weight="bold" color="#8A5A0B" ls={0.8}>
@@ -560,10 +584,15 @@ function ModeContent({ a, mode }: { a: Article; mode: Mode }) {
           </Txt>
         </LinearGradient>
       ) : null}
-      <Txt size={mode === 'deep' ? 15.5 : 16.5} lh={mode === 'deep' ? 26 : 28} color={isDark ? "#CBD5E3" : "#252B36"}>
+      <Txt
+        size={mode === 'deep' ? 15 : 16.5}
+        lh={mode === 'deep' ? 24 : 28}
+        color={isDark ? '#CBD5E3' : '#252B36'}
+        numberOfLines={mode === 'deep' ? 12 : mode === 'eli5' ? 8 : 9}
+      >
         {text}
       </Txt>
-    </RNScrollView>
+    </View>
   );
 }
 
