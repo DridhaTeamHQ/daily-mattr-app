@@ -60,7 +60,7 @@ function makeText(t: TStyle, extra?: object) {
     return (
       <Text
         {...rest}
-        style={[{ fontFamily: t.f, fontSize: t.size, lineHeight: t.lh, letterSpacing: t.ls, color }, extra, style]}
+        style={[{ fontFamily: t.f, fontSize: t.size, lineHeight: t.lh, letterSpacing: t.ls, color, userSelect: 'none' as const }, extra, style]}
       />
     );
   };
@@ -81,7 +81,7 @@ export function Txt(props: TextProps & { size?: number; lh?: number; color?: str
   const { c } = useTheme();
   const { size = 14, lh, color = c.ink, weight = 'regular', ls = 0, style, ...rest } = props;
   return (
-    <Text {...rest} style={[{ fontFamily: font[weight], fontSize: size, lineHeight: lh ?? size * 1.45, letterSpacing: ls, color }, style]} />
+    <Text {...rest} style={[{ fontFamily: font[weight], fontSize: size, lineHeight: lh ?? size * 1.45, letterSpacing: ls, color, userSelect: 'none' as const }, style]} />
   );
 }
 
