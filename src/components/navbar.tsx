@@ -11,6 +11,7 @@ import Animated, {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, shadow, spring } from '@/theme';
 import { useTheme } from '@/lib/theme';
+import { useNavVisibility } from '@/lib/navVisibility';
 import { LIcon, Txt, Press } from './ui';
 
 type TabBarProps = { state: any; navigation: any };
@@ -29,12 +30,17 @@ export function GlassNavbar({ state, navigation }: TabBarProps) {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { c, isDark } = useTheme();
+  const { visible } = useNavVisibility();
+  const visAnim = useAnimatedStyle(() => ({
+    transform: [{ translateY: withSpring(visible ? 0 : 150, spring.gentle) }],
+    opacity: withSpring(visible ? 1 : 0, spring.gentle),
+  }));
   const surface = isDark
     ? { backgroundColor: 'rgba(21,28,44,0.92)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.09)' }
     : { backgroundColor: '#FFFFFF' };
 
   return (
-    <View pointerEvents="box-none" style={[s.wrap, { bottom: Math.max(insets.bottom, 14) + 6 }]}>
+    <Animated.View pointerEvents={visible ? 'box-none' : 'none'} style={[s.wrap, { bottom: Math.max(insets.bottom, 14) + 6 }, visAnim]}>
       <Press onPress={() => router.push('/search')} scaleTo={0.9} style={[s.searchCircle, shadow.nav, surface]}>
         <LIcon name="search" size={21} color={c.ink} strokeWidth={2} />
       </Press>
@@ -60,7 +66,7 @@ export function GlassNavbar({ state, navigation }: TabBarProps) {
           );
         })}
       </View>
-    </View>
+    </Animated.View>
   );
 }
 

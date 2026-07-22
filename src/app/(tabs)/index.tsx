@@ -20,6 +20,7 @@ import { CarouselCard, ArticleRow } from '@/components/cards';
 import { NAVBAR_CLEARANCE } from '@/components/navbar';
 import { fetchFeed, fetchFeedPage, fetchForYou, fetchTrending, fetchBreaking } from '@/lib/queries';
 import { getUnreadBreaking } from '@/lib/notifications';
+import { useNavVisibility } from '@/lib/navVisibility';
 
 const TABS: { label: string; topics?: string[] }[] = [
   { label: 'For You' },
@@ -45,6 +46,16 @@ export default function Home() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { c, isDark, toggle } = useTheme();
+  const nav = useNavVisibility();
+  const lastY = React.useRef(0);
+  const onNavScroll = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const y = e.nativeEvent.contentOffset.y;
+    const dy = y - lastY.current;
+    if (y < 60) nav.show();
+    else if (dy > 14) nav.hide();
+    else if (dy < -14) nav.show();
+    lastY.current = y;
+  };
   const [tab, setTab] = useState('For You');
 
   const active = TABS.find((t) => t.label === tab)!;
@@ -124,6 +135,8 @@ export default function Home() {
       <ScrollView
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{ paddingTop: insets.top + 14, paddingBottom: NAVBAR_CLEARANCE + 16 }}
+        onScroll={onNavScroll}
+        scrollEventThrottle={32}
         refreshControl={<RefreshControl refreshing={false} tintColor={c.brand} onRefresh={refetchAll} />}
       >
         {/* quiet header */}

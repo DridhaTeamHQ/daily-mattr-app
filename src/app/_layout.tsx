@@ -17,6 +17,7 @@ import {
 } from '@expo-google-fonts/inter';
 import { StoreProvider } from '@/lib/store';
 import { ThemeProvider, useTheme } from '@/lib/theme';
+import { NavVisibilityProvider } from '@/lib/navVisibility';
 import { registerPushToken, checkBreaking, addNotificationTapListener } from '@/lib/notifications';
 import { flush } from '@/lib/telemetry';
 import { ONBOARDED_KEY, setOnboardedFlag, subscribeOnboarded } from '@/lib/onboardingKey';
@@ -51,7 +52,9 @@ export default function RootLayout() {
     <PersistQueryClientProvider client={queryClient} persistOptions={{ persister, maxAge: 24 * 3600_000 }}>
       <StoreProvider>
         <ThemeProvider>
-          <ThemedStack />
+          <NavVisibilityProvider>
+            <ThemedStack />
+          </NavVisibilityProvider>
         </ThemeProvider>
       </StoreProvider>
     </PersistQueryClientProvider>

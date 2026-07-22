@@ -1,6 +1,7 @@
 import React, { useCallback, useMemo, useRef, useState } from 'react';
-import { View, StyleSheet, Dimensions, Share, ScrollView as RNScrollView, LayoutChangeEvent, useWindowDimensions, Platform } from 'react-native';
+import { View, StyleSheet, Dimensions, Share, ScrollView as RNScrollView, LayoutChangeEvent, useWindowDimensions, Platform, Pressable } from 'react-native';
 import MaskedView from '@react-native-masked-view/masked-view';
+import { BlurView } from 'expo-blur';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useQuery } from '@tanstack/react-query';
 import { Image } from 'expo-image';
@@ -24,6 +25,7 @@ import { fetchReaderFeed } from '@/lib/queries';
 import { type Article, timeAgo, isBreaking } from '@/lib/content';
 import { useStore } from '@/lib/store';
 import { useTheme } from '@/lib/theme';
+import { useNavVisibility } from '@/lib/navVisibility';
 import { track, createDwellTimer, flush as flushTelemetry } from '@/lib/telemetry';
 import { artFor, topicArt } from '@/lib/topicArt';
 
@@ -94,6 +96,7 @@ export default function Reader() {
     loadingMore.current = false;
   }, [data]);
 
+  const nav = useNavVisibility();
   const onScroll = useAnimatedScrollHandler((e) => {
     scrollY.value = e.contentOffset.y;
   });
@@ -164,6 +167,7 @@ export default function Reader() {
             </PageShell>
           )}
           onScroll={onScroll}
+          onScrollBeginDrag={() => nav.hide()}
           scrollEventThrottle={16}
           pagingEnabled
           showsVerticalScrollIndicator={false}
@@ -326,6 +330,7 @@ function PageShell({ index, pageH, scrollY, children }: { index: number; pageH: 
 
 function ReaderCard({ a, height, topInset }: { a: Article; height: number; topInset: number }) {
   const { c, isDark } = useTheme();
+  const nav = useNavVisibility();
   const t = topicOf(a.topic);
   const { isSaved, toggleSaved, isLiked, toggleLiked, recordRead } = useStore();
   const [mode, setMode] = useState<Mode>('summary');
@@ -393,7 +398,7 @@ function ReaderCard({ a, height, topInset }: { a: Article; height: number; topIn
   );
 
   return (
-    <View style={{ height, backgroundColor: c.bg, overflow: 'hidden' }}>
+    <Pressable onPress={() => nav.toggle()} style={{ height, backgroundColor: c.bg, overflow: 'hidden' }}>
       <Image
         source={imgSource}
         style={StyleSheet.absoluteFill}
@@ -451,10 +456,48 @@ function ReaderCard({ a, height, topInset }: { a: Article; height: number; topIn
         </View>
       </View>
 
-      {/* spacer keeps content flow aligned with the absolute image */}
-      <View style={{ height: imgH }} />
+      {/* frosted sheet that FEATHERS into the image — no hard edge */}
+      <View style={[s.sheet, { top: imgH - 40 }]}>
+        {Platform.OS === 'web' ? (
+          <>
+            <BlurView intensity={26} tint={isDark ? 'dark' : 'light'} style={StyleSheet.absoluteFill} />
+            <LinearGradient
+              colors={
+                isDark
+                  ? (['rgba(12,17,29,0)', 'rgba(12,17,29,0.42)', 'rgba(12,17,29,0.62)'] as any)
+                  : (['rgba(250,251,253,0)', 'rgba(250,251,253,0.48)', 'rgba(250,251,253,0.68)'] as any)
+              }
+              locations={[0, 0.14, 0.3]}
+              style={StyleSheet.absoluteFill}
+            />
+          </>
+        ) : (
+          <MaskedView
+            style={StyleSheet.absoluteFill}
+            maskElement={
+              <LinearGradient
+                colors={['rgba(0,0,0,0)', 'rgba(0,0,0,0.65)', '#000']}
+                locations={[0, 0.1, 0.22]}
+                style={{ flex: 1 }}
+              />
+            }
+          >
+            <BlurView
+              intensity={30}
+              tint={isDark ? 'dark' : 'light'}
+              experimentalBlurMethod="dimezisBlurView"
+              style={StyleSheet.absoluteFill}
+            />
+            <View
+              style={[
+                StyleSheet.absoluteFill,
+                { backgroundColor: isDark ? 'rgba(12,17,29,0.6)' : 'rgba(250,251,253,0.66)' },
+              ]}
+            />
+          </MaskedView>
+        )}
 
-      <View style={{ flex: 1, paddingHorizontal: 24, marginTop: -34 }}>
+        <View style={{ flex: 1, paddingHorizontal: 24, paddingTop: 34 }}>
         <Headline numberOfLines={3} style={{ fontSize: 25, lineHeight: 31 }}>
           {a.title}
         </Headline>
@@ -482,7 +525,7 @@ function ReaderCard({ a, height, topInset }: { a: Article; height: number; topIn
         </Animated.View>
 
         {/* footer */}
-        <View style={[s.footer, { paddingBottom: 112 }]}>
+        <View style={[s.footer, { paddingBottom: 26 }]}>
           <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
             <LinearGradient colors={t.grad} style={s.pubDot} />
             <Txt size={13} weight="semibold" numberOfLines={1} style={{ flexShrink: 1 }}>
@@ -541,8 +584,9 @@ function ReaderCard({ a, height, topInset }: { a: Article; height: number; topIn
             </Press>
           </View>
         </View>
+        </View>
       </View>
-    </View>
+    </Pressable>
   );
 }
 
@@ -628,14 +672,15 @@ function HeartBurst() {
       {[...Array(6)].map((_, i) => {
         const angle = (i / 6) * Math.PI * 2;
         return (
-          <Animated.View
+          <View
             key={i}
-            entering={ZoomIn.duration(340).springify().damping(9)}
-            style={[
-              s.burstDot,
-              { transform: [{ translateX: Math.cos(angle) * 24 }, { translateY: Math.sin(angle) * 24 }] },
-            ]}
-          />
+            style={{
+              position: 'absolute',
+              transform: [{ translateX: Math.cos(angle) * 24 }, { translateY: Math.sin(angle) * 24 }],
+            }}
+          >
+            <Animated.View entering={ZoomIn.duration(340).springify().damping(9)} style={s.burstDot} />
+          </View>
         );
       })}
     </View>
@@ -700,6 +745,12 @@ const s = StyleSheet.create({
     justifyContent: 'space-between',
     paddingTop: 12,
   },
+  sheet: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+  },
   pubDot: { width: 9, height: 9, borderRadius: 5, marginRight: 8 },
   actionCircle: {
     width: 42,
@@ -719,7 +770,6 @@ const s = StyleSheet.create({
     justifyContent: 'center',
   },
   burstDot: {
-    position: 'absolute',
     width: 6,
     height: 6,
     borderRadius: 3,
