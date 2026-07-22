@@ -2,6 +2,7 @@ import { Stack, Redirect, useRouter, useSegments } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect, useRef, useState } from 'react';
 import { AppState } from 'react-native';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { StatusBar } from 'expo-status-bar';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { QueryClient } from '@tanstack/react-query';
@@ -49,15 +50,17 @@ export default function RootLayout() {
   if (!loaded) return null;
 
   return (
-    <PersistQueryClientProvider client={queryClient} persistOptions={{ persister, maxAge: 24 * 3600_000 }}>
-      <StoreProvider>
-        <ThemeProvider>
-          <NavVisibilityProvider>
-            <ThemedStack />
-          </NavVisibilityProvider>
-        </ThemeProvider>
-      </StoreProvider>
-    </PersistQueryClientProvider>
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <PersistQueryClientProvider client={queryClient} persistOptions={{ persister, maxAge: 24 * 3600_000 }}>
+        <StoreProvider>
+          <ThemeProvider>
+            <NavVisibilityProvider>
+              <ThemedStack />
+            </NavVisibilityProvider>
+          </ThemeProvider>
+        </StoreProvider>
+      </PersistQueryClientProvider>
+    </GestureHandlerRootView>
   );
 }
 

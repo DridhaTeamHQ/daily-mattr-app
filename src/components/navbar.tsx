@@ -7,11 +7,15 @@ import Animated, {
   useAnimatedStyle,
   withSpring,
   interpolate,
+  LinearTransition,
 } from 'react-native-reanimated';
+
+const APressable = Animated.createAnimatedComponent(Pressable);
+const TAB_MORPH = LinearTransition.springify().damping(30).stiffness(260).mass(0.8);
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, shadow, spring } from '@/theme';
 import { useTheme } from '@/lib/theme';
-import { useNavVisibility } from '@/lib/navVisibility';
+import { useNavVisible } from '@/lib/navVisibility';
 import { LIcon, Txt, Press } from './ui';
 
 type TabBarProps = { state: any; navigation: any };
@@ -30,7 +34,7 @@ export function GlassNavbar({ state, navigation }: TabBarProps) {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { c, isDark } = useTheme();
-  const { visible } = useNavVisibility();
+  const visible = useNavVisible();
   const visAnim = useAnimatedStyle(() => ({
     transform: [{ translateY: withSpring(visible ? 0 : 150, spring.gentle) }],
     opacity: withSpring(visible ? 1 : 0, spring.gentle),
@@ -50,8 +54,9 @@ export function GlassNavbar({ state, navigation }: TabBarProps) {
           const meta = TABS[route.name] ?? TABS.index;
           const focused = state.index === i;
           return (
-            <Pressable
+            <APressable
               key={route.key}
+              layout={TAB_MORPH}
               accessibilityRole="button"
               accessibilityState={focused ? { selected: true } : {}}
               onPress={() => {
@@ -62,7 +67,7 @@ export function GlassNavbar({ state, navigation }: TabBarProps) {
               style={[s.tab, focused ? [s.tabActive, { backgroundColor: c.brand }] : null]}
             >
               <TabItem icon={meta.icon} label={meta.label} focused={focused} />
-            </Pressable>
+            </APressable>
           );
         })}
       </View>
@@ -133,7 +138,9 @@ const s = StyleSheet.create({
     paddingHorizontal: 8,
   },
   tab: {
-    flex: 1,
+    flexGrow: 1,
+    flexShrink: 1,
+    flexBasis: 0,
     height: BAR_HEIGHT - 12,
     borderRadius: 999,
     alignItems: 'center',

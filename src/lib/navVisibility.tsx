@@ -1,28 +1,37 @@
 import React, { createContext, useContext, useMemo, useState } from 'react';
 
-// Global navbar visibility: screens hide it while reading/scrolling and a
-// tap brings it back — freeing the bottom of the screen for content.
-type NavVis = {
-  visible: boolean;
+// Global navbar visibility, split into two contexts so screens that only
+// TRIGGER hide/show (on scroll) never re-render when visibility changes —
+// only the navbar itself subscribes to the state.
+type NavActions = {
   show: () => void;
   hide: () => void;
   toggle: () => void;
 };
 
-const Ctx = createContext<NavVis>({ visible: true, show: () => {}, hide: () => {}, toggle: () => {} });
+const StateCtx = createContext<boolean>(true);
+const ActionsCtx = createContext<NavActions>({ show: () => {}, hide: () => {}, toggle: () => {} });
 
 export function NavVisibilityProvider({ children }: { children: React.ReactNode }) {
   const [visible, setVisible] = useState(true);
-  const value = useMemo<NavVis>(
+  // stable identity forever — consumers of actions never re-render
+  const actions = useMemo<NavActions>(
     () => ({
-      visible,
       show: () => setVisible(true),
       hide: () => setVisible(false),
       toggle: () => setVisible((v) => !v),
     }),
-    [visible],
+    [],
   );
-  return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
+  return (
+    <ActionsCtx.Provider value={actions}>
+      <StateCtx.Provider value={visible}>{children}</StateCtx.Provider>
+    </ActionsCtx.Provider>
+  );
 }
 
-export const useNavVisibility = () => useContext(Ctx);
+// navbar only
+export const useNavVisible = () => useContext(StateCtx);
+
+// screens: stable, re-render-free
+export const useNavVisibility = () => useContext(ActionsCtx);

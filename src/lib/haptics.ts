@@ -29,6 +29,35 @@ export const soft = () => {
   if (enabled) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Soft ?? Haptics.ImpactFeedbackStyle.Light);
 };
 
+export const medium = () => {
+  if (enabled) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+};
+
 export const success = () => {
   if (enabled) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+};
+
+/* Sequences — premium feel comes from timed patterns, not intensity.
+   Each answers one question: "did that happen?" */
+
+// collecting something: a thump, then a tiny settle tick
+export const save = () => {
+  if (!enabled) return;
+  soft();
+  setTimeout(tick, 90);
+};
+
+// committing a big choice (dial select): decisive thump now,
+// soft landing when the bloom dissolves
+export const commit = (settleMs = 560) => {
+  if (!enabled) return;
+  medium();
+  setTimeout(soft, settleMs);
+};
+
+// fresh content arrived: two feather ticks
+export const arrive = () => {
+  if (!enabled) return;
+  tick();
+  setTimeout(tick, 110);
 };

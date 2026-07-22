@@ -1,11 +1,11 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { View, StyleSheet, Share, Dimensions, ActivityIndicator } from 'react-native';
+import { View, StyleSheet, Share, Dimensions } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useQuery } from '@tanstack/react-query';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
-import { soft } from '@/lib/haptics';
+import { soft, tick, save as saveHaptic } from '@/lib/haptics';
 import * as Speech from 'expo-speech';
 import * as WebBrowser from 'expo-web-browser';
 import Animated, {
@@ -19,7 +19,7 @@ import Animated, {
   FadeInDown,
 } from 'react-native-reanimated';
 import { colors, radius, shadow, topicOf } from '@/theme';
-import { Headline, Txt, BodyText, Press, IconButton, EasedScrim, LIcon } from '@/components/ui';
+import { Headline, Txt, BodyText, Press, IconButton, EasedScrim, LIcon, LogoLoader } from '@/components/ui';
 import { RecommendCard } from '@/components/cards';
 import { fetchArticle, fetchRelated } from '@/lib/queries';
 import { timeAgo } from '@/lib/content';
@@ -115,7 +115,7 @@ export default function ArticleScreen() {
   if (isLoading || !a) {
     return (
       <View style={{ flex: 1, backgroundColor: c.bg, alignItems: 'center', justifyContent: 'center' }}>
-        <ActivityIndicator color={c.brand} />
+        <LogoLoader />
       </View>
     );
   }
@@ -322,7 +322,8 @@ export default function ArticleScreen() {
             color="#fff"
             bg={saved ? c.brand : 'rgba(11,13,18,0.38)'}
             onPress={() => {
-              soft();
+              if (!saved) saveHaptic();
+              else tick();
               toggleSaved(a.id, a.topic);
             }}
           />

@@ -446,6 +446,61 @@ export function BreakingBadge() {
   );
 }
 
+/* ---------- Page loader: breathing gradient D mark ---------- */
+
+export function LogoLoader({ size = 58 }: { size?: number }) {
+  const v = useSharedValue(0);
+  useEffect(() => {
+    v.value = withRepeat(
+      withSequence(withTiming(1, { duration: 800 }), withTiming(0, { duration: 800 })),
+      -1,
+    );
+  }, [v]);
+  const mark = useAnimatedStyle(() => ({
+    transform: [{ scale: 0.94 + v.value * 0.08 }],
+  }));
+  const halo = useAnimatedStyle(() => ({
+    opacity: 0.5 - v.value * 0.5,
+    transform: [{ scale: 1 + v.value * 0.55 }],
+  }));
+  return (
+    <View style={{ alignItems: 'center', justifyContent: 'center' }}>
+      <Animated.View
+        style={[
+          {
+            position: 'absolute',
+            width: size,
+            height: size,
+            borderRadius: size / 2,
+            borderWidth: 1.5,
+            borderColor: colors.brand,
+          },
+          halo,
+        ]}
+      />
+      <Animated.View style={mark}>
+        <LinearGradient
+          colors={['#6694FF', colors.brand]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={{
+            width: size,
+            height: size,
+            borderRadius: size / 2,
+            alignItems: 'center',
+            justifyContent: 'center',
+            boxShadow: '0 10px 30px rgba(57,121,255,0.35)',
+          }}
+        >
+          <Txt size={size * 0.44} weight="extrabold" color="#fff">
+            D
+          </Txt>
+        </LinearGradient>
+      </Animated.View>
+    </View>
+  );
+}
+
 const s = StyleSheet.create({
   iconBtn: {
     width: 40,

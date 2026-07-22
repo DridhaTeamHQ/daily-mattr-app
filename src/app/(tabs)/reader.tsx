@@ -6,7 +6,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useQuery } from '@tanstack/react-query';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
-import { tick, soft } from '@/lib/haptics';
+import { tick, soft, save as saveHaptic, commit as commitHaptic } from '@/lib/haptics';
 import * as WebBrowser from 'expo-web-browser';
 import Animated, {
   FadeInDown,
@@ -81,7 +81,7 @@ export default function Reader() {
   };
   const bloomTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const handleDialSelect = (t: string | null) => {
-    soft();
+    commitHaptic(560);
     setDrawerOpen(false); // stop capturing touches immediately
     setTopicFilter(t);
     setRevealTopic(t);
@@ -477,6 +477,7 @@ function ReaderCard({ a, height, topInset }: { a: Article; height: number; topIn
   const { isSaved, toggleSaved, isLiked, toggleLiked, recordRead } = useStore();
   const [mode, setMode] = useState<Mode>('summary');
   const [burst, setBurst] = useState(0);
+  const [saveRing, setSaveRing] = useState(0);
   const saved = isSaved(a.id);
   const liked = isLiked(a.id);
 
@@ -635,17 +636,25 @@ function ReaderCard({ a, height, topInset }: { a: Article; height: number; topIn
               </Press>
               {burst > 0 && liked ? <HeartBurst key={burst} /> : null}
             </View>
-            <Press
-              haptic={false}
-              scaleTo={0.9}
-              onPress={() => {
-                soft();
-                toggleSaved(a.id, a.topic);
-              }}
-              style={[s.actionCircle, { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(11,13,18,0.045)' }, saved ? { backgroundColor: c.brand, boxShadow: '0 6px 18px rgba(57,121,255,0.4)' } : null]}
-            >
-              <LIcon name="bookmark" size={16} color={saved ? '#fff' : c.ink} fill={saved ? '#fff' : 'none'} />
-            </Press>
+            <View>
+              <Press
+                haptic={false}
+                scaleTo={0.9}
+                onPress={() => {
+                  if (!saved) {
+                    saveHaptic();
+                    setSaveRing((r) => r + 1);
+                  } else {
+                    tick();
+                  }
+                  toggleSaved(a.id, a.topic);
+                }}
+                style={[s.actionCircle, { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(11,13,18,0.045)' }, saved ? { backgroundColor: c.brand, boxShadow: '0 6px 18px rgba(57,121,255,0.4)' } : null]}
+              >
+                <LIcon name="bookmark" size={16} color={saved ? '#fff' : c.ink} fill={saved ? '#fff' : 'none'} />
+              </Press>
+              {saveRing > 0 && saved ? <SaveRing key={saveRing} color={c.brand} /> : null}
+            </View>
             <Press
               haptic={false}
               scaleTo={0.9}
@@ -749,6 +758,35 @@ function ModeContent({ a, mode }: { a: Article; mode: Mode }) {
         {text}
       </Txt>
     </View>
+  );
+}
+
+function SaveRing({ color }: { color: string }) {
+  const v = useSharedValue(0);
+  React.useEffect(() => {
+    v.value = withTiming(1, { duration: 480, easing: Easing.out(Easing.cubic) });
+  }, [v]);
+  const a = useAnimatedStyle(() => ({
+    opacity: 1 - v.value,
+    transform: [{ scale: 1 + v.value * 1.1 }],
+  }));
+  return (
+    <Animated.View
+      pointerEvents="none"
+      style={[
+        {
+          position: 'absolute',
+          top: -2,
+          left: -2,
+          width: 46,
+          height: 46,
+          borderRadius: 23,
+          borderWidth: 2,
+          borderColor: color,
+        },
+        a,
+      ]}
+    />
   );
 }
 

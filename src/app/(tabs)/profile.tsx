@@ -4,7 +4,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { useQuery } from '@tanstack/react-query';
 import { LinearGradient } from 'expo-linear-gradient';
-import { tick } from '@/lib/haptics';
+import { tick, soft } from '@/lib/haptics';
+import ReanimatedSwipeable from 'react-native-gesture-handler/ReanimatedSwipeable';
 import Animated, {
   FadeInDown,
   FadeIn,
@@ -27,7 +28,7 @@ export default function Profile() {
   const { c, isDark } = useTheme();
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const { saved, savedTopics, history, topTopics } = useStore();
+  const { saved, savedTopics, history, topTopics, toggleSaved } = useStore();
   const [tab, setTab] = useState<'Saved' | 'History'>('Saved');
 
   const stats = useMemo(() => {
@@ -216,13 +217,58 @@ export default function Profile() {
               </Txt>
             </View>
           ) : (
-            (data ?? []).map((a, i) => <ArticleRow key={a.id} a={a} index={i} />)
+            (data ?? []).map((a, i) =>
+              tab === 'Saved' ? (
+                <SwipeToDelete key={a.id} onDelete={() => toggleSaved(a.id, a.topic)}>
+                  <ArticleRow a={a} index={i} />
+                </SwipeToDelete>
+              ) : (
+                <ArticleRow key={a.id} a={a} index={i} />
+              ),
+            )
           )}
         </View>
       </ScrollView>
     </View>
   );
 }
+
+// Swipe right on a saved row → red trash panel slides in from the left;
+// releasing past the threshold removes the article from Saved.
+function SwipeToDelete({ children, onDelete }: { children: React.ReactNode; onDelete: () => void }) {
+  return (
+    <ReanimatedSwipeable
+      friction={1.6}
+      leftThreshold={72}
+      overshootLeft={false}
+      renderLeftActions={() => (
+        <View style={sw.deletePanel}>
+          <LIcon name="trash-2" size={20} color="#fff" />
+          <Txt size={11.5} weight="semibold" color="#fff" style={{ marginTop: 4 }}>
+            Remove
+          </Txt>
+        </View>
+      )}
+      onSwipeableWillOpen={(dir) => {
+        if (dir === 'left') {
+          soft();
+          onDelete();
+        }
+      }}
+    >
+      {children}
+    </ReanimatedSwipeable>
+  );
+}
+
+const sw = StyleSheet.create({
+  deletePanel: {
+    width: 96,
+    backgroundColor: '#FF3B30',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+});
 
 function WeekBar({ n, max, index, isToday }: { n: number; max: number; index: number; isToday: boolean }) {
   const { c } = useTheme();
