@@ -317,10 +317,16 @@ export default function Reader() {
               Topics
             </Txt>
             <Txt size={12} weight="medium" color="rgba(255,255,255,0.45)" style={{ marginTop: 3 }}>
-              keep holding · drag · release to open
+              hold &amp; drag · or tap, spin and pick
             </Txt>
           </View>
-          <TopicWheel selected={topicFilter} onSelect={handleDialSelect} brand={c.brand} spin={spin} />
+          <TopicWheel
+            selected={topicFilter}
+            onSelect={handleDialSelect}
+            onClose={() => openDrawer(false)}
+            brand={c.brand}
+            spin={spin}
+          />
         </Animated.View>
         {/* the chosen bubble blooms over the screen, then dissolves */}
         {revealTopic !== undefined ? (
@@ -349,8 +355,8 @@ export default function Reader() {
 // The blend zone: how far the glass takes to melt from clear to readable.
 // Long on purpose — a short ramp reads as an edge.
 const FEATHER = 178;
-const SHEET_LIGHT = 'rgba(255,255,255,0.8)';
-const SHEET_DARK = 'rgba(12,17,29,0.84)';
+const SHEET_LIGHT = 'rgba(255,255,255,0.72)';
+const SHEET_DARK = 'rgba(12,17,29,0.78)';
 
 const WHEEL_ROW = 108;
 const WHEEL_ITEMS: (string | null)[] = [null, ...READER_TOPICS]; // null = For You
@@ -383,17 +389,45 @@ function arcAngle(index: number, spin: number): number {
 function TopicWheel({
   selected,
   onSelect,
+  onClose,
   brand,
   spin,
 }: {
   selected: string | null;
   onSelect: (t: string | null) => void;
+  onClose: () => void;
   brand: string;
   spin: SharedValue<number>;
 }) {
   const { height: winH } = useWindowDimensions();
   const cy = winH / 2;
   const ry = winH * 0.54; // arc runs off the top and bottom edges
+
+  // Once the dial is open by tap it still has to be spinnable — this drags the
+  // wheel from any empty space, throws with the flick, and settles on a detent.
+  // Tapping that same empty space dismisses.
+  const dragFrom = useSharedValue(0);
+  const cb = useRef(onClose);
+  cb.current = onClose;
+  const browse = useMemo(() => {
+    const drag = Gesture.Pan()
+      .minDistance(6)
+      .onStart(() => {
+        dragFrom.value = spin.value;
+      })
+      .onUpdate((e) => {
+        spin.value = dragFrom.value - e.translationY / DRAG_PX;
+      })
+      .onEnd((e) => {
+        const thrown = spin.value - (e.velocityY / DRAG_PX) * 0.09;
+        spin.value = withSpring(Math.round(thrown), spring.gentle);
+      });
+    const dismiss = Gesture.Tap().onEnd((_e, ok) => {
+      if (ok) runOnJS(cb.current)();
+    });
+    return Gesture.Exclusive(drag, dismiss);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // a detent every time a new topic takes the focus point
   useAnimatedReaction(
@@ -405,6 +439,10 @@ function TopicWheel({
 
   return (
     <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
+      {/* drag surface sits behind the bubbles so their taps still land */}
+      <GestureDetector gesture={browse}>
+        <View style={StyleSheet.absoluteFill} />
+      </GestureDetector>
       {WHEEL_ITEMS.map((t, i) => (
         <ArcBubble key={t ?? 'foryou'} index={i} spin={spin} cy={cy} ry={ry}>
           {t === null ? (
@@ -597,7 +635,7 @@ function ReaderCard({ a, height, topInset }: { a: Article; height: number; topIn
   const imgSource = a.imageUrl ? { uri: a.imageUrl } : artFor(a.topic);
   // ambient glass: the article's own image, heavily blurred, becomes the
   // card's backdrop so its palette bleeds through the whole surface
-  const tint = isDark ? 'rgba(8,11,20,0.74)' : 'rgba(255,255,255,0.45)';
+  const tint = isDark ? 'rgba(8,11,20,0.62)' : 'rgba(255,255,255,0.32)';
   // sharp image dissolves via a TRUE alpha mask — no bands, no seams
   const fadeH = imgH + 110;
 
@@ -686,19 +724,19 @@ function ReaderCard({ a, height, topInset }: { a: Article; height: number; topIn
             isDark
               ? ([
                   'rgba(12,17,29,0)',
-                  'rgba(12,17,29,0.09)',
-                  'rgba(12,17,29,0.26)',
-                  'rgba(12,17,29,0.52)',
-                  'rgba(12,17,29,0.72)',
+                  'rgba(12,17,29,0.08)',
+                  'rgba(12,17,29,0.24)',
+                  'rgba(12,17,29,0.48)',
+                  'rgba(12,17,29,0.66)',
                   SHEET_DARK,
                   SHEET_DARK,
                 ] as any)
               : ([
                   'rgba(255,255,255,0)',
-                  'rgba(255,255,255,0.09)',
-                  'rgba(255,255,255,0.26)',
-                  'rgba(255,255,255,0.52)',
-                  'rgba(255,255,255,0.70)',
+                  'rgba(255,255,255,0.08)',
+                  'rgba(255,255,255,0.24)',
+                  'rgba(255,255,255,0.46)',
+                  'rgba(255,255,255,0.63)',
                   SHEET_LIGHT,
                   SHEET_LIGHT,
                 ] as any)
