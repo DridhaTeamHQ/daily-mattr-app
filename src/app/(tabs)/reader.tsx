@@ -2,6 +2,7 @@ import React, { useCallback, useMemo, useRef, useState } from 'react';
 import { View, StyleSheet, Dimensions, Share, ScrollView as RNScrollView, LayoutChangeEvent, useWindowDimensions, Platform, Pressable } from 'react-native';
 import MaskedView from '@react-native-masked-view/masked-view';
 import { BlurView } from 'expo-blur';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useQuery } from '@tanstack/react-query';
 import { Image } from 'expo-image';
@@ -72,6 +73,14 @@ export default function Reader() {
     transform: [{ scale: interpolate(drawer.value, [0, 1], [1.06, 1]) }],
   }));
 
+  // fractional index sitting at the dial's focus point
+  const spin = useSharedValue(0);
+  const spinFrom = useSharedValue(0);
+  React.useEffect(() => {
+    const i = WHEEL_ITEMS.findIndex((x) => x === topicFilter);
+    spin.value = i < 0 ? 0 : i;
+  }, [topicFilter, spin]);
+
   // bubble bloom: tapped bubble expands + fades, revealing the deck
   const reveal = useSharedValue(0);
   const [revealTopic, setRevealTopic] = useState<string | null | undefined>(undefined);
@@ -93,6 +102,39 @@ export default function Reader() {
     if (bloomTimer.current) clearTimeout(bloomTimer.current);
     bloomTimer.current = setTimeout(endBloom, 580);
   };
+  // One continuous gesture: long-press summons the dial, the same unbroken
+  // drag spins it, and lifting off commits whatever sits at the focus point.
+  const openForHold = () => {
+    setRevealTopic(undefined);
+    reveal.value = 0;
+    setDrawerOpen(true);
+    drawer.value = withSpring(1, spring.snappy);
+    soft();
+  };
+  const commitSpin = (idx: number) => {
+    const n = WHEEL_ITEMS.length;
+    handleDialSelect(WHEEL_ITEMS[(((idx % n) + n) % n)]);
+  };
+  const topicGesture = useMemo(() => {
+    const hold = Gesture.Pan()
+      .activateAfterLongPress(180)
+      .onStart(() => {
+        spinFrom.value = spin.value;
+        runOnJS(openForHold)();
+      })
+      .onUpdate((e) => {
+        spin.value = spinFrom.value - e.translationY / DRAG_PX;
+      })
+      .onEnd(() => {
+        runOnJS(commitSpin)(Math.round(spin.value));
+      });
+    const tap = Gesture.Tap().onEnd((_e, ok) => {
+      if (ok) runOnJS(openDrawer)(true);
+    });
+    return Gesture.Exclusive(hold, tap);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const backdropFade = useAnimatedStyle(() => ({ opacity: 1 - reveal.value }));
   const wheelFade = useAnimatedStyle(() => ({ opacity: Math.max(0, 1 - reveal.value * 2.2) }));
   const bubbleBloom = useAnimatedStyle(() => ({
@@ -239,14 +281,13 @@ export default function Reader() {
         />
       ) : null}
 
-      {/* topics trigger */}
-      <Press
-        onPress={() => openDrawer(true)}
-        scaleTo={0.88}
-        style={[st.topicsBtn, { top: insets.top + 10 }]}
-      >
-        <LIcon name="layout-grid" size={17} color="#fff" strokeWidth={2.2} />
-      </Press>
+      {/* topics trigger — hold to summon the dial, keep dragging to spin it,
+          release on a topic to open it. A plain tap still opens it to browse. */}
+      <GestureDetector gesture={topicGesture}>
+        <Animated.View style={[st.topicsBtn, { top: insets.top + 10 }]}>
+          <LIcon name="layout-grid" size={17} color="#fff" strokeWidth={2.2} />
+        </Animated.View>
+      </GestureDetector>
       {topicFilter ? (
         <View style={[st.filterTag, { top: insets.top + 58 }]}>
           <Txt size={11.5} weight="bold" color="#fff">
@@ -274,12 +315,10 @@ export default function Reader() {
               Topics
             </Txt>
             <Txt size={12} weight="medium" color="rgba(255,255,255,0.45)" style={{ marginTop: 3 }}>
-              drag to spin · tap to choose
+              keep holding · drag · release to open
             </Txt>
           </View>
-          {/* fixed center ring the dial snaps into */}
-          <View pointerEvents="none" style={st.centerRing} />
-          <TopicWheel selected={topicFilter} onSelect={handleDialSelect} brand={c.brand} />
+          <TopicWheel selected={topicFilter} onSelect={handleDialSelect} brand={c.brand} spin={spin} />
         </Animated.View>
         {/* the chosen bubble blooms over the screen, then dissolves */}
         {revealTopic !== undefined ? (
@@ -308,125 +347,127 @@ export default function Reader() {
 // The blend zone: how far the glass takes to melt from clear to readable.
 // Long on purpose — a short ramp reads as an edge.
 const FEATHER = 178;
-const SHEET_LIGHT = 'rgba(255,255,255,0.92)';
-const SHEET_DARK = 'rgba(12,17,29,0.93)';
+const SHEET_LIGHT = 'rgba(255,255,255,0.8)';
+const SHEET_DARK = 'rgba(12,17,29,0.84)';
 
 const WHEEL_ROW = 108;
 const WHEEL_ITEMS: (string | null)[] = [null, ...READER_TOPICS]; // null = For You
+
+/* The dial is a half-circle hinged off the right edge: every topic is placed
+   by its angle, so the focused one swings out toward the middle of the screen
+   and the rest curve back toward the edge above and below it. Driven by one
+   shared value the press-drag gesture writes to. */
+
+const ARC_STEP = 0.55; // radians between neighbours — wide enough that bubbles never touch
+const ARC_R = W * 0.58; // radius of the half circle
+const ARC_CX = W + 26; // centre sits just off the right edge, so only half shows
+const ARC_EDGE = 1.62; // past this angle a bubble has left the visible arc
+const BUBBLE = 84;
+export const DRAG_PX = 74; // finger travel per topic
+
+// Shortest way round the ring, so topics always fill the arc above AND below
+// the focus instead of fanning off in one direction from the first item.
+function arcAngle(index: number, spin: number): number {
+  'worklet';
+  const n = WHEEL_ITEMS.length;
+  let d = (((index - spin) % n) + n) % n;
+  if (d > n / 2) d -= n;
+  return d * ARC_STEP;
+}
 
 function TopicWheel({
   selected,
   onSelect,
   brand,
+  spin,
 }: {
   selected: string | null;
   onSelect: (t: string | null) => void;
   brand: string;
+  spin: SharedValue<number>;
 }) {
-  const wheelY = useSharedValue(0);
-  // onLayout can report 0 on a freshly-mounted overlay, which would leave the
-  // dial empty — fall back to the window like the deck does for page height
   const { height: winH } = useWindowDimensions();
-  const [measured, setMeasured] = useState(0);
-  const wheelH = measured > 100 ? measured : winH;
-  const scrollRef = useRef<any>(null);
+  const cy = winH / 2;
 
-  const onWheelScroll = useAnimatedScrollHandler((e) => {
-    wheelY.value = e.contentOffset.y;
-  });
-
-  // haptic detent each time a new bubble crosses the ring
+  // a detent every time a new topic takes the focus point
   useAnimatedReaction(
-    () => Math.round(wheelY.value / WHEEL_ROW),
+    () => Math.round(spin.value),
     (cur, prev) => {
       if (prev !== null && cur !== prev) runOnJS(tick)();
     },
   );
 
-  const choose = (i: number, t: string | null) => {
-    scrollRef.current?.scrollTo({ y: i * WHEEL_ROW, animated: false });
-    onSelect(t);
-  };
-
-  const pad = Math.max((wheelH - WHEEL_ROW) / 2, 0);
-  const startIndex = Math.max(
-    WHEEL_ITEMS.findIndex((t) => t === selected),
-    0,
-  );
-
   return (
-    <View
-      style={StyleSheet.absoluteFill}
-      pointerEvents="box-none"
-      onLayout={(e) => setMeasured(e.nativeEvent.layout.height)}
-    >
-      <View pointerEvents="none" style={st.centerRing} />
-      {(
-        <Animated.ScrollView
-          ref={scrollRef}
-          onScroll={onWheelScroll}
-          scrollEventThrottle={16}
-          snapToInterval={WHEEL_ROW}
-          decelerationRate="fast"
-          showsVerticalScrollIndicator={false}
-          contentOffset={{ x: 0, y: startIndex * WHEEL_ROW }}
-          contentContainerStyle={{ paddingTop: pad, paddingBottom: pad }}
-        >
-          {WHEEL_ITEMS.map((t, i) => (
-            <WheelRow key={t ?? 'foryou'} index={i} wheelY={wheelY}>
-              {t === null ? (
-                <Press
-                  haptic={false}
-                  onPress={() => choose(i, t)}
-                  scaleTo={0.94}
-                  style={{ alignItems: 'center' }}
-                >
-                  <View style={[st.forYouBubble, { backgroundColor: brand }]}>
-                    <LIcon name="sparkles" size={22} color="#fff" strokeWidth={2.2} />
-                    <Txt size={12.5} weight="bold" color="#fff" style={{ marginTop: 4 }}>
-                      For You
-                    </Txt>
-                  </View>
-                </Press>
-              ) : (
-                <TopicBubble topic={t} size={92} selected={selected === t} onPress={() => choose(i, t)} />
-              )}
-            </WheelRow>
-          ))}
-        </Animated.ScrollView>
-      )}
+    <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
+      {WHEEL_ITEMS.map((t, i) => (
+        <ArcBubble key={t ?? 'foryou'} index={i} spin={spin} cy={cy}>
+          {t === null ? (
+            <Press
+              haptic={false}
+              onPress={() => {
+                spin.value = i;
+                onSelect(t);
+              }}
+              scaleTo={0.94}
+              style={{ alignItems: 'center' }}
+            >
+              <View style={[st.forYouBubble, { backgroundColor: brand }]}>
+                <LIcon name="sparkles" size={20} color="#fff" strokeWidth={2.2} />
+                <Txt size={12} weight="bold" color="#fff" style={{ marginTop: 3 }}>
+                  For You
+                </Txt>
+              </View>
+            </Press>
+          ) : (
+            <TopicBubble
+              topic={t}
+              size={BUBBLE}
+              selected={selected === t}
+              onPress={() => {
+                spin.value = i;
+                onSelect(t);
+              }}
+            />
+          )}
+        </ArcBubble>
+      ))}
     </View>
   );
 }
 
-/* Rows ride a circle rather than a straight line: each is placed by its angle
-   on the dial, so bubbles swing out to the right at the centre and curve away
-   left — and tilt as they go — like a physical rotary wheel turning past you. */
-const ARC_STEP = 0.4; // radians between neighbours
-const ARC_RY = WHEEL_ROW / Math.sin(ARC_STEP); // keeps centre spacing ~WHEEL_ROW
-const ARC_RX = 108; // how far the dial bulges toward the reader
-
-function WheelRow({ index, wheelY, children }: { index: number; wheelY: SharedValue<number>; children: React.ReactNode }) {
-  const a = useAnimatedStyle(() => {
-    const d = index - wheelY.value / WHEEL_ROW;
-    const ad = Math.abs(d);
-    // clamp before the circle turns past its own crest, else far rows swing
-    // back down and pile up on the visible ones
-    const theta = Math.max(-1.15, Math.min(1.15, d * ARC_STEP));
+// translate and scale live on separate views so the scale always pivots on the
+// bubble's own centre rather than its translated origin
+function ArcBubble({
+  index,
+  spin,
+  cy,
+  children,
+}: {
+  index: number;
+  spin: SharedValue<number>;
+  cy: number;
+  children: React.ReactNode;
+}) {
+  const place = useAnimatedStyle(() => {
+    const theta = arcAngle(index, spin.value);
+    const ad = Math.abs(theta);
     return {
+      opacity: interpolate(ad, [0, 0.55, 1.15, ARC_EDGE], [1, 0.6, 0.22, 0], Extrapolation.CLAMP),
       transform: [
-        // undo the linear stacking, then re-place on the circle
-        { translateY: ARC_RY * Math.sin(theta) - d * WHEEL_ROW },
-        { translateX: -(1 - Math.cos(theta)) * ARC_RX },
-        { rotateZ: `${theta * 26}deg` },
-        { scale: interpolate(ad, [0, 1, 2, 3.5], [1.3, 0.8, 0.58, 0.44], Extrapolation.CLAMP) },
+        { translateX: ARC_CX - ARC_R * Math.cos(theta) - BUBBLE / 2 },
+        { translateY: cy + ARC_R * Math.sin(theta) - BUBBLE / 2 },
       ],
-      opacity: interpolate(ad, [0, 1, 2, 3], [1, 0.52, 0.2, 0], Extrapolation.CLAMP),
     };
   });
+  const size = useAnimatedStyle(() => {
+    const ad = Math.abs(arcAngle(index, spin.value));
+    return { transform: [{ scale: interpolate(ad, [0, 0.4, 1.0, ARC_EDGE], [1.3, 0.94, 0.66, 0.5], Extrapolation.CLAMP) }] };
+  });
   return (
-    <Animated.View style={[{ height: WHEEL_ROW, alignItems: 'center', justifyContent: 'center' }, a]}>
-      {children}
+    <Animated.View
+      style={[{ position: 'absolute', left: 0, top: 0, width: BUBBLE, height: BUBBLE, alignItems: 'center', justifyContent: 'center' }, place]}
+    >
+      <Animated.View style={size}>{children}</Animated.View>
     </Animated.View>
   );
 }
@@ -632,24 +673,32 @@ function ReaderCard({ a, height, topInset }: { a: Article; height: number; topIn
             isDark
               ? ([
                   'rgba(12,17,29,0)',
-                  'rgba(12,17,29,0.10)',
-                  'rgba(12,17,29,0.30)',
-                  'rgba(12,17,29,0.58)',
-                  'rgba(12,17,29,0.80)',
+                  'rgba(12,17,29,0.09)',
+                  'rgba(12,17,29,0.26)',
+                  'rgba(12,17,29,0.52)',
+                  'rgba(12,17,29,0.72)',
                   SHEET_DARK,
                   SHEET_DARK,
                 ] as any)
               : ([
                   'rgba(255,255,255,0)',
-                  'rgba(255,255,255,0.10)',
-                  'rgba(255,255,255,0.30)',
-                  'rgba(255,255,255,0.58)',
-                  'rgba(255,255,255,0.80)',
+                  'rgba(255,255,255,0.09)',
+                  'rgba(255,255,255,0.26)',
+                  'rgba(255,255,255,0.52)',
+                  'rgba(255,255,255,0.70)',
                   SHEET_LIGHT,
                   SHEET_LIGHT,
                 ] as any)
           }
           locations={sheetStops}
+          style={StyleSheet.absoluteFill}
+        />
+        {/* the photo's colour carries on down into the sheet instead of
+            stopping dead at pure white */}
+        <LinearGradient
+          pointerEvents="none"
+          colors={[t.wash, t.wash, 'rgba(0,0,0,0)'] as any}
+          locations={[0, 0.18, 0.72]}
           style={StyleSheet.absoluteFill}
         />
 
