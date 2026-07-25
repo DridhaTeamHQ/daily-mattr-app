@@ -1,5 +1,5 @@
 import React, { useCallback, useMemo, useRef, useState } from 'react';
-import { View, StyleSheet, Dimensions, Share, ScrollView as RNScrollView, LayoutChangeEvent, useWindowDimensions, Platform, Pressable } from 'react-native';
+import { View, StyleSheet, Dimensions, Share, LayoutChangeEvent, useWindowDimensions, Platform, Pressable } from 'react-native';
 import MaskedView from '@react-native-masked-view/masked-view';
 import { BlurView } from 'expo-blur';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
@@ -11,7 +11,6 @@ import { tick, soft, save as saveHaptic, commit as commitHaptic } from '@/lib/ha
 import * as WebBrowser from 'expo-web-browser';
 import Animated, {
   FadeInDown,
-  ZoomIn,
   useSharedValue,
   useAnimatedScrollHandler,
   useAnimatedStyle,
@@ -26,7 +25,7 @@ import Animated, {
   type SharedValue,
 } from 'react-native-reanimated';
 import { colors, radius, spring, topicOf } from '@/theme';
-import { Txt, Headline, Press, Shimmer, BreakingBadge, EasedScrim, LIcon, TopicBubble, CategoryTab } from '@/components/ui';
+import { Txt, Headline, Press, Shimmer, BreakingBadge, EasedScrim, LIcon, TopicBubble } from '@/components/ui';
 import { fetchReaderFeed } from '@/lib/queries';
 import { type Article, timeAgo, isBreaking } from '@/lib/content';
 import { useStore } from '@/lib/store';
@@ -36,16 +35,6 @@ import { track, createDwellTimer, flush as flushTelemetry } from '@/lib/telemetr
 import { artFor, topicArt } from '@/lib/topicArt';
 
 const { width: W } = Dimensions.get('window');
-
-type Mode = 'summary' | 'eli5' | 'tldr' | 'numbers' | 'deep';
-
-const MODE_META: { key: Mode; label: string; icon: string }[] = [
-  { key: 'summary', label: 'Summary', icon: 'sparkles' },
-  { key: 'eli5', label: "I'm 5", icon: 'baby' },
-  { key: 'tldr', label: '60-sec', icon: 'timer' },
-  { key: 'numbers', label: 'Numbers', icon: 'chart-no-axes-column' },
-  { key: 'deep', label: 'Deep dive', icon: 'telescope' },
-];
 
 const READER_TOPICS = Object.keys(topicArt);
 
@@ -200,6 +189,10 @@ export default function Reader() {
     [pageH, topInset],
   );
 
+  const { recordRead } = useStore();
+  const recordReadRef = useRef(recordRead);
+  recordReadRef.current = recordRead;
+
   const dwellRef = useRef<{ id: string; topic: string; words: number; timer: ReturnType<typeof createDwellTimer> } | null>(null);
 
   const closeDwell = useCallback(() => {
@@ -220,6 +213,7 @@ export default function Reader() {
     if (dwellRef.current?.id === a.id) return;
     closeDwell();
     tick();
+    recordReadRef.current(a.id, a.topic); // the card the reader actually landed on
     dwellRef.current = { id: a.id, topic: a.topic, words: a.wordCount, timer: createDwellTimer() };
   }).current;
 
@@ -586,8 +580,7 @@ function ReaderCard({ a, height, topInset }: { a: Article; height: number; topIn
   const { c, isDark } = useTheme();
   const nav = useNavVisibility();
   const t = topicOf(a.topic);
-  const { isSaved, toggleSaved, isLiked, toggleLiked, recordRead } = useStore();
-  const [mode, setMode] = useState<Mode>('summary');
+  const { isSaved, toggleSaved, isLiked, toggleLiked } = useStore();
   const [burst, setBurst] = useState(0);
   const [saveRing, setSaveRing] = useState(0);
   const saved = isSaved(a.id);
@@ -602,21 +595,6 @@ function ReaderCard({ a, height, topInset }: { a: Article; height: number; topIn
     );
   }, [liked, heartPop]);
   const heartStyle = useAnimatedStyle(() => ({ transform: [{ scale: 1 + heartPop.value * 0.34 }] }));
-
-  const modes = useMemo(() => {
-    const avail: Mode[] = ['summary'];
-    if (a.modes?.eli5) avail.push('eli5');
-    if (a.modes?.tldr?.length) avail.push('tldr');
-    if (a.modes?.keyNumbers?.length) avail.push('numbers');
-    if (a.modes?.deepDive) avail.push('deep');
-    return MODE_META.filter((m) => avail.includes(m.key));
-  }, [a.modes]);
-
-  const switchMode = (m: Mode) => {
-    setMode(m);
-    recordRead(a.id, a.topic);
-    track({ article_id: a.id, event_type: 'mode_switch', topic: a.topic, meta: { mode: m } });
-  };
 
   const imgH = Math.max(height * 0.36, 240);
 
@@ -758,19 +736,11 @@ function ReaderCard({ a, height, topInset }: { a: Article; height: number; topIn
           {a.title}
         </Headline>
 
-        {/* mode switcher — editorial text tabs, no pills */}
-        <RNScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          style={{ flexGrow: 0, marginTop: 10 }}
+        <Animated.View
+          entering={FadeInDown.duration(320).springify().damping(30).stiffness(250).mass(0.9)}
+          style={{ flex: 1, marginTop: 22 }}
         >
-          {modes.map((m) => (
-            <CategoryTab key={m.key} label={m.label} active={mode === m.key} onPress={() => switchMode(m.key)} />
-          ))}
-        </RNScrollView>
-
-        <Animated.View key={mode} entering={FadeInDown.duration(300).springify().damping(30).stiffness(250).mass(0.9)} style={{ flex: 1, marginTop: 16 }}>
-          <ModeContent a={a} mode={mode} />
+          <SummaryBody a={a} />
         </Animated.View>
 
         {/* footer */}
@@ -849,77 +819,23 @@ function ReaderCard({ a, height, topInset }: { a: Article; height: number; topIn
   );
 }
 
-function ModeContent({ a, mode }: { a: Article; mode: Mode }) {
+/* Reading type. Measure here is ~41 characters — mobile can't reach the 66ish
+   print ideal, and on lines that short generous leading reads as disconnected
+   rather than airy, so the ratio is ~1.55 instead of the 1.7 it was. Newsreader
+   carries the body as well as the headline: it was drawn for continuous
+   on-screen reading, so the card speaks in one editorial voice. */
+function SummaryBody({ a }: { a: Article }) {
   const { c, isDark } = useTheme();
-  if (mode === 'tldr' && a.modes?.tldr) {
-    return (
-      <View style={{ gap: 13 }}>
-        {a.modes.tldr.slice(0, 5).map((b, i) => (
-          <Animated.View key={i} entering={FadeInDown.delay(i * 80)} style={{ flexDirection: 'row', gap: 11 }}>
-            <LinearGradient colors={[c.brandLight, c.brand]} style={s.tldrNum}>
-              <Txt size={11.5} weight="bold" color="#fff">
-                {i + 1}
-              </Txt>
-            </LinearGradient>
-            <Txt size={15.5} lh={23.5} color={c.ink} style={{ flex: 1 }}>
-              {b}
-            </Txt>
-          </Animated.View>
-        ))}
-      </View>
-    );
-  }
-  if (mode === 'numbers' && a.modes?.keyNumbers) {
-    return (
-      <View style={{ gap: 10 }}>
-        {a.modes.keyNumbers.slice(0, 5).map((k, i) => {
-          const m = k.match(/^([\d.,%₹$€]+[\w%]*)\s*[—–:-]?\s*(.*)$/);
-          const big = m?.[1];
-          const rest = m?.[2] || k;
-          return (
-            <Animated.View key={i} entering={ZoomIn.delay(i * 90).springify().damping(30).stiffness(250).mass(0.9)}>
-              <LinearGradient
-                colors={isDark ? ['rgba(77,136,255,0.14)', 'rgba(77,136,255,0.07)'] : ['#F3F7FF', '#EAF1FF']}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                style={s.numCard}
-              >
-                {big && big !== rest ? (
-                  <Txt size={23} weight="extrabold" color={c.brand} ls={-0.6}>
-                    {big}
-                  </Txt>
-                ) : null}
-                <Txt size={13.5} lh={19.5} color={isDark ? "#9FB4D8" : "#41506B"} style={{ marginTop: big && big !== rest ? 3 : 0 }}>
-                  {rest}
-                </Txt>
-              </LinearGradient>
-            </Animated.View>
-          );
-        })}
-      </View>
-    );
-  }
-
-  const text = mode === 'eli5' ? a.modes?.eli5 ?? a.summary : mode === 'deep' ? a.modes?.deepDive ?? a.summary : a.summary;
-
-  // Static — no inner scrolling inside the swipe deck. Long text clamps with
-  // an ellipsis; the open-full action has the rest.
   return (
     <View style={{ flex: 1 }}>
-      {mode === 'eli5' ? (
-        <LinearGradient colors={['#FFE9C2', '#FFD9A3']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={s.eli5Tag}>
-          <Txt size={10.5} weight="bold" color="#8A5A0B" ls={0.8}>
-            EXPLAINED SIMPLY
-          </Txt>
-        </LinearGradient>
-      ) : null}
       <Txt
-        size={mode === 'deep' ? 15 : 16.5}
-        lh={mode === 'deep' ? 24 : 28}
-        color={isDark ? '#CBD5E3' : '#252B36'}
-        numberOfLines={mode === 'deep' ? 12 : mode === 'eli5' ? 8 : 9}
+        serif
+        size={17.5}
+        lh={27}
+        color={isDark ? '#DCE4F0' : '#1E242F'}
+        numberOfLines={11}
       >
-        {text}
+        {a.summary}
       </Txt>
     </View>
   );
