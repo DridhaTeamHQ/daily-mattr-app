@@ -731,7 +731,7 @@ function ReaderCard({ a, height, topInset }: { a: Article; height: number; topIn
           style={StyleSheet.absoluteFill}
         />
 
-        <View style={{ flex: 1, paddingHorizontal: 24, paddingTop: FEATHER + 22 }}>
+        <View style={{ flex: 1, paddingHorizontal: 30, paddingTop: FEATHER + 22 }}>
         <Headline numberOfLines={4} style={{ fontSize: 24, lineHeight: 29, letterSpacing: -0.7 }}>
           {a.title}
         </Headline>
@@ -910,7 +910,7 @@ function BurstDot({ angle, v }: { angle: number; v: SharedValue<number> }) {
 const s = StyleSheet.create({
   cardTop: {
     position: 'absolute',
-    left: 18,
+    left: 22,
     right: 66,
     flexDirection: 'row',
     justifyContent: 'space-between',
