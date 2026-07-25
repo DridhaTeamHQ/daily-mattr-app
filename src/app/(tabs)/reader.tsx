@@ -731,7 +731,7 @@ function ReaderCard({ a, height, topInset }: { a: Article; height: number; topIn
           style={StyleSheet.absoluteFill}
         />
 
-        <View style={{ flex: 1, paddingHorizontal: 30, paddingTop: FEATHER + 22 }}>
+        <View style={{ flex: 1, paddingHorizontal: 26, paddingTop: FEATHER + 22 }}>
         <Headline numberOfLines={4} style={{ fontSize: 24, lineHeight: 29, letterSpacing: -0.7 }}>
           {a.title}
         </Headline>
@@ -819,19 +819,22 @@ function ReaderCard({ a, height, topInset }: { a: Article; height: number; topIn
   );
 }
 
-/* Reading type. Measure here is ~41 characters — mobile can't reach the 66ish
-   print ideal, and on lines that short generous leading reads as disconnected
-   rather than airy, so the ratio is ~1.55 instead of the 1.7 it was. Body stays
-   on the UI face: at this size Inter is the most legible thing we have. */
+/* Reading type. Justified so both edges are flush — ragged right was reading as
+   broken alignment, especially with the long proper nouns news copy is full of.
+   Justification only behaves on a wide enough measure, so the column widens and
+   the size eases back to put ~43 characters on a line instead of ~38; below
+   about 40 the word gaps stretch into rivers. Leading stays near 1.55: on short
+   lines the looser ratio reads as disconnected rather than airy. */
 function SummaryBody({ a }: { a: Article }) {
   const { c, isDark } = useTheme();
   return (
     <View style={{ flex: 1 }}>
       <Txt
-        size={17}
-        lh={26.5}
+        size={16.5}
+        lh={26}
         color={isDark ? '#DCE4F0' : '#1E242F'}
         numberOfLines={11}
+        style={{ textAlign: 'justify' }}
       >
         {a.summary}
       </Txt>
