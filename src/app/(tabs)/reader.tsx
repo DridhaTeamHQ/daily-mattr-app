@@ -819,12 +819,16 @@ function ReaderCard({ a, height, topInset }: { a: Article; height: number; topIn
   );
 }
 
-/* Reading type. Justified so both edges are flush — ragged right was reading as
-   broken alignment, especially with the long proper nouns news copy is full of.
-   Justification only behaves on a wide enough measure, so the column widens and
-   the size eases back to put ~43 characters on a line instead of ~38; below
-   about 40 the word gaps stretch into rivers. Leading stays near 1.55: on short
-   lines the looser ratio reads as disconnected rather than airy. */
+/* Reading type.
+   Justification alone is what opened the word gaps: with no hyphenation a long
+   word has to move whole to the next line, and the spaces left behind stretch to
+   fill it. Kindle and Apple Books justify too, and the reason theirs looks clean
+   is hyphenation — a broken word takes half the slack out of the line before the
+   spaces ever see it. So justification is paired with it here, and only used on
+   Android, where RN can actually reach the platform hyphenator. iOS exposes no
+   equivalent, so there it stays ragged rather than gappy — a flush edge is not
+   worth rivers. highQuality break strategy lets the engine look at the whole
+   paragraph instead of greedily filling line by line. */
 function SummaryBody({ a }: { a: Article }) {
   const { c, isDark } = useTheme();
   return (
@@ -834,7 +838,9 @@ function SummaryBody({ a }: { a: Article }) {
         lh={26}
         color={isDark ? '#DCE4F0' : '#1E242F'}
         numberOfLines={11}
-        style={{ textAlign: 'justify' }}
+        android_hyphenationFrequency="full"
+        textBreakStrategy="highQuality"
+        style={{ textAlign: Platform.OS === 'android' ? 'justify' : 'left' }}
       >
         {a.summary}
       </Txt>
