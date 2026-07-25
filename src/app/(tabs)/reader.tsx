@@ -3,7 +3,6 @@ import { View, StyleSheet, Dimensions, Share, LayoutChangeEvent, useWindowDimens
 import MaskedView from '@react-native-masked-view/masked-view';
 import { BlurView } from 'expo-blur';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
-import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useQuery } from '@tanstack/react-query';
 import { Image } from 'expo-image';
@@ -29,6 +28,7 @@ import { colors, radius, spring, topicOf } from '@/theme';
 import { Txt, Headline, Press, Shimmer, BreakingBadge, EasedScrim, LIcon, TopicBubble } from '@/components/ui';
 import { fetchReaderFeed } from '@/lib/queries';
 import { fetchCommentCounts } from '@/lib/comments';
+import { CommentsPanel } from '@/components/commentsPanel';
 import { type Article, timeAgo, isBreaking } from '@/lib/content';
 import { useStore } from '@/lib/store';
 import { useTheme } from '@/lib/theme';
@@ -601,7 +601,6 @@ function ReaderCard({
   commentCount?: number;
 }) {
   const { c, isDark } = useTheme();
-  const router = useRouter();
   const nav = useNavVisibility();
 
   // Pull the card rightward to open the publisher's own page. activeOffsetX
@@ -636,6 +635,7 @@ function ReaderCard({
   const { isSaved, toggleSaved, isLiked, toggleLiked } = useStore();
   const [burst, setBurst] = useState(0);
   const [saveRing, setSaveRing] = useState(0);
+  const [showComments, setShowComments] = useState(false);
   const saved = isSaved(a.id);
   const liked = isLiked(a.id);
 
@@ -800,12 +800,18 @@ function ReaderCard({
           {a.title}
         </Headline>
 
-        <Animated.View
-          entering={FadeInDown.duration(320).springify().damping(30).stiffness(250).mass(0.9)}
-          style={{ flex: 1, marginTop: 22 }}
-        >
-          <SummaryBody a={a} />
-        </Animated.View>
+        <View style={{ flex: 1, marginTop: 22 }}>
+          {showComments ? (
+            <CommentsPanel articleId={a.id} onClose={() => setShowComments(false)} />
+          ) : (
+            <Animated.View
+              entering={FadeInDown.duration(320).springify().damping(30).stiffness(250).mass(0.9)}
+              style={{ flex: 1 }}
+            >
+              <SummaryBody a={a} />
+            </Animated.View>
+          )}
+        </View>
 
         {/* footer */}
         <View style={[s.footer, { paddingBottom: 26 }]}>
@@ -869,11 +875,20 @@ function ReaderCard({
               scaleTo={0.9}
               onPress={() => {
                 tick();
-                router.push({ pathname: '/comments/[id]', params: { id: a.id } });
+                setShowComments((v) => !v);
               }}
-              style={[s.actionCircle, { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(11,13,18,0.045)' }]}
+              style={[
+                s.actionCircle,
+                { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(11,13,18,0.045)' },
+                showComments ? { backgroundColor: c.brand } : null,
+              ]}
             >
-              <LIcon name="message-circle" size={16} color={c.ink} />
+              <LIcon
+                name="message-circle"
+                size={16}
+                color={showComments ? '#fff' : c.ink}
+                fill={showComments ? '#fff' : 'none'}
+              />
               {commentCount > 0 ? (
                 <View style={[s.countBadge, { backgroundColor: c.brand }]}>
                   <Txt size={9.5} weight="bold" color="#fff">
@@ -892,16 +907,12 @@ function ReaderCard({
   );
 }
 
-/* Reading type.
-   Justification alone is what opened the word gaps: with no hyphenation a long
-   word has to move whole to the next line, and the spaces left behind stretch to
-   fill it. Kindle and Apple Books justify too, and the reason theirs looks clean
-   is hyphenation — a broken word takes half the slack out of the line before the
-   spaces ever see it. So justification is paired with it here, and only used on
-   Android, where RN can actually reach the platform hyphenator. iOS exposes no
-   equivalent, so there it stays ragged rather than gappy — a flush edge is not
-   worth rivers. highQuality break strategy lets the engine look at the whole
-   paragraph instead of greedily filling line by line. */
+/* Reading type. Ragged right, which is what news apps actually do — justifying
+   a phone-width column trades an even edge for uneven word spacing, and the rag
+   also gives the eye a landmark to find its place again after glancing away.
+   Hyphenation and the highQuality break strategy stay: they tighten the rag by
+   letting long words split and by weighing the whole paragraph rather than
+   greedily filling one line at a time. */
 function SummaryBody({ a }: { a: Article }) {
   const { c, isDark } = useTheme();
   return (
@@ -913,7 +924,6 @@ function SummaryBody({ a }: { a: Article }) {
         numberOfLines={11}
         android_hyphenationFrequency="full"
         textBreakStrategy="highQuality"
-        style={{ textAlign: Platform.OS === 'android' ? 'justify' : 'left' }}
       >
         {a.summary}
       </Txt>
