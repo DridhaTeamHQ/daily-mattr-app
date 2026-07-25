@@ -21,6 +21,7 @@ import Animated, {
   runOnJS,
   withTiming,
   withSequence,
+  LinearTransition,
   Easing,
   type SharedValue,
 } from 'react-native-reanimated';
@@ -39,6 +40,9 @@ import { artFor, topicArt } from '@/lib/topicArt';
 const { width: W } = Dimensions.get('window');
 
 const READER_TOPICS = Object.keys(topicArt);
+
+// eases the headline up when comments take the card over
+const CONTENT_SHIFT = LinearTransition.springify().damping(30).stiffness(240).mass(0.85);
 
 export default function Reader() {
   const { c, isDark } = useTheme();
@@ -636,6 +640,7 @@ function ReaderCard({
   const [burst, setBurst] = useState(0);
   const [saveRing, setSaveRing] = useState(0);
   const [showComments, setShowComments] = useState(false);
+
   const saved = isSaved(a.id);
   const liked = isLiked(a.id);
 
@@ -662,6 +667,7 @@ function ReaderCard({
       washStops: [0, f * 0.85, Math.min(f + 0.16, 0.94), 1] as [number, number, ...number[]],
     };
   }, [height, imgH]);
+
 
   const imgSource = a.imageUrl ? { uri: a.imageUrl } : artFor(a.topic);
   // ambient glass: the article's own image, heavily blurred, becomes the
@@ -795,8 +801,17 @@ function ReaderCard({
           style={StyleSheet.absoluteFill}
         />
 
-        <View style={{ flex: 1, paddingHorizontal: 26, paddingTop: FEATHER + 22 }}>
-        <Headline numberOfLines={4} style={{ fontSize: 24, lineHeight: 29, letterSpacing: -0.7 }}>
+        {/* Comments need room, so the headline climbs the card and gives up
+            lines; the panel is flex:1 and inherits everything that frees up,
+            while the sheet and footer stay exactly where they were. */}
+        <Animated.View
+          layout={CONTENT_SHIFT}
+          style={{ flex: 1, paddingHorizontal: 26, paddingTop: showComments ? topInset + 44 : FEATHER + 22 }}
+        >
+        <Headline
+          numberOfLines={showComments ? 2 : 4}
+          style={{ fontSize: showComments ? 19 : 24, lineHeight: showComments ? 24 : 29, letterSpacing: -0.7 }}
+        >
           {a.title}
         </Headline>
 
@@ -899,7 +914,7 @@ function ReaderCard({
             </Press>
           </View>
         </View>
-        </View>
+        </Animated.View>
       </View>
         </Pressable>
       </Animated.View>

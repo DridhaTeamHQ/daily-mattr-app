@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { View, TextInput, StyleSheet, ActivityIndicator, ScrollView } from 'react-native';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
@@ -6,7 +6,14 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { radius } from '@/theme';
 import { useTheme } from '@/lib/theme';
 import { Txt, Press, LIcon } from './ui';
-import { fetchComments, addComment, nameFor, type Comment } from '@/lib/comments';
+import {
+  fetchComments,
+  addComment,
+  toggleCommentLike,
+  threadOf,
+  nameFor,
+  type Comment,
+} from '@/lib/comments';
 import { timeAgo } from '@/lib/content';
 import { soft, tick } from '@/lib/haptics';
 
@@ -16,19 +23,46 @@ export function CommentsPanel({ articleId, onClose }: { articleId: string; onClo
   const { c, isDark } = useTheme();
   const qc = useQueryClient();
   const [text, setText] = useState('');
+  const [replyTo, setReplyTo] = useState<Comment | null>(null);
 
-  const { data, isLoading } = useQuery({
-    queryKey: ['comments', articleId],
-    queryFn: () => fetchComments(articleId),
-  });
+  const key = ['comments', articleId];
+  const { data, isLoading } = useQuery({ queryKey: key, queryFn: () => fetchComments(articleId) });
+
+  const rows = useMemo(() => threadOf(data ?? []), [data]);
 
   const post = useMutation({
-    mutationFn: (body: string) => addComment(articleId, body),
+    mutationFn: (body: string) => addComment(articleId, body, replyTo?.id ?? null),
     onSuccess: (created) => {
       setText('');
+      setReplyTo(null);
       soft();
-      qc.setQueryData<Comment[]>(['comments', articleId], (prev) => [created, ...(prev ?? [])]);
+      qc.setQueryData<Comment[]>(key, (prev) => [...(prev ?? []), created]);
       qc.invalidateQueries({ queryKey: ['commentCounts'] });
+    },
+  });
+
+  const like = useMutation({
+    mutationFn: (id: string) => toggleCommentLike(id),
+    // flip it under the thumb; the server's number replaces it on return
+    onMutate: async (id) => {
+      await qc.cancelQueries({ queryKey: key });
+      const prev = qc.getQueryData<Comment[]>(key);
+      qc.setQueryData<Comment[]>(key, (old) =>
+        (old ?? []).map((x) =>
+          x.id === id
+            ? { ...x, likedByMe: !x.likedByMe, likeCount: x.likeCount + (x.likedByMe ? -1 : 1) }
+            : x,
+        ),
+      );
+      return { prev };
+    },
+    onError: (_e, _id, ctx) => {
+      if (ctx?.prev) qc.setQueryData(key, ctx.prev);
+    },
+    onSuccess: (res, id) => {
+      qc.setQueryData<Comment[]>(key, (old) =>
+        (old ?? []).map((x) => (x.id === id ? { ...x, likedByMe: res.liked, likeCount: res.likeCount } : x)),
+      );
     },
   });
 
@@ -40,12 +74,13 @@ export function CommentsPanel({ articleId, onClose }: { articleId: string; onClo
 
   const line = isDark ? 'rgba(255,255,255,0.10)' : 'rgba(11,13,18,0.08)';
   const field = isDark ? 'rgba(255,255,255,0.09)' : 'rgba(11,13,18,0.05)';
+  const total = data?.length ?? 0;
 
   return (
     <Animated.View entering={FadeInDown.duration(260).springify().damping(30).stiffness(260).mass(0.8)} style={{ flex: 1 }}>
       <View style={[s.head, { borderBottomColor: line }]}>
         <Txt size={14} weight="bold" ls={-0.2}>
-          Comments{data?.length ? ` · ${data.length}` : ''}
+          Comments{total ? ` · ${total}` : ''}
         </Txt>
         <Press
           haptic={false}
@@ -64,7 +99,7 @@ export function CommentsPanel({ articleId, onClose }: { articleId: string; onClo
         <View style={s.centre}>
           <ActivityIndicator color={c.brand} />
         </View>
-      ) : (data ?? []).length === 0 ? (
+      ) : rows.length === 0 ? (
         <Animated.View entering={FadeIn.duration(240)} style={s.centre}>
           <LIcon name="message-circle" size={22} color={c.inkFaint} />
           <Txt size={13.5} weight="semibold" color={c.inkSoft} style={{ marginTop: 8 }}>
@@ -75,45 +110,99 @@ export function CommentsPanel({ articleId, onClose }: { articleId: string; onClo
           </Txt>
         </Animated.View>
       ) : (
-        <ScrollView
-          showsVerticalScrollIndicator={false}
-          keyboardShouldPersistTaps="handled"
-          contentContainerStyle={{ paddingVertical: 10 }}
-        >
-          {(data ?? []).map((item, i) => (
+        <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingVertical: 8 }}>
+          {rows.map(({ comment: x, isReply }, i) => (
             <Animated.View
-              key={item.id}
-              entering={FadeInDown.delay(Math.min(i, 6) * 35).springify().damping(30).stiffness(250).mass(0.9)}
-              style={s.row}
+              key={x.id}
+              entering={FadeInDown.delay(Math.min(i, 6) * 30).springify().damping(30).stiffness(250).mass(0.9)}
+              style={[s.row, isReply ? { paddingLeft: 34 } : null]}
             >
-              <LinearGradient colors={[c.brandLight, c.brand]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={s.avatar}>
-                <Txt size={11} weight="bold" color="#fff">
-                  {nameFor(item.deviceId).slice(0, 1)}
+              <LinearGradient
+                colors={[c.brandLight, c.brand]}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={[s.avatar, isReply ? s.avatarSmall : null]}
+              >
+                <Txt size={isReply ? 9.5 : 11} weight="bold" color="#fff">
+                  {nameFor(x.deviceId).slice(0, 1)}
                 </Txt>
               </LinearGradient>
+
               <View style={{ flex: 1 }}>
-                <Txt size={13.5} lh={19} color={c.ink}>
-                  <Txt size={13.5} weight="bold" color={c.ink}>
-                    {nameFor(item.deviceId)}
+                <Txt size={isReply ? 13 : 13.5} lh={isReply ? 18.5 : 19} color={c.ink}>
+                  <Txt size={isReply ? 13 : 13.5} weight="bold" color={c.ink}>
+                    {nameFor(x.deviceId)}
                   </Txt>
                   {'  '}
-                  {item.body}
+                  {x.body}
                 </Txt>
-                <Txt size={11} weight="medium" color={c.inkFaint} style={{ marginTop: 3 }}>
-                  {timeAgo(item.createdAt)}
-                </Txt>
+                <View style={s.metaRow}>
+                  <Txt size={11} weight="medium" color={c.inkFaint}>
+                    {timeAgo(x.createdAt)}
+                  </Txt>
+                  {x.likeCount > 0 ? (
+                    <Txt size={11} weight="semibold" color={c.inkFaint}>
+                      {x.likeCount} {x.likeCount === 1 ? 'like' : 'likes'}
+                    </Txt>
+                  ) : null}
+                  <Press
+                    haptic={false}
+                    hitSlop={10}
+                    onPress={() => {
+                      tick();
+                      // replying to a reply is fine — the server threads it
+                      // under that reply's root, so nesting stays one deep
+                      setReplyTo(x);
+                    }}
+                    scaleTo={0.94}
+                    style={{ paddingVertical: 4 }}
+                  >
+                    <Txt size={11} weight="bold" color={c.inkSoft}>
+                      Reply
+                    </Txt>
+                  </Press>
+                </View>
               </View>
+
+              <Press
+                haptic={false}
+                hitSlop={12}
+                onPress={() => {
+                  tick();
+                  like.mutate(x.id);
+                }}
+                scaleTo={0.85}
+                style={s.heart}
+              >
+                <LIcon
+                  name="heart"
+                  size={14}
+                  color={x.likedByMe ? c.breaking : c.inkFaint}
+                  fill={x.likedByMe ? c.breaking : 'none'}
+                />
+              </Press>
             </Animated.View>
           ))}
         </ScrollView>
       )}
+
+      {replyTo ? (
+        <Animated.View entering={FadeIn.duration(180)} style={[s.replyBar, { backgroundColor: field }]}>
+          <Txt size={11.5} weight="medium" color={c.inkSoft} numberOfLines={1} style={{ flex: 1 }}>
+            Replying to <Txt size={11.5} weight="bold" color={c.ink}>{nameFor(replyTo.deviceId)}</Txt>
+          </Txt>
+          <Press haptic={false} onPress={() => setReplyTo(null)} scaleTo={0.88} style={{ padding: 3 }}>
+            <LIcon name="x" size={13} color={c.inkSoft} strokeWidth={2.4} />
+          </Press>
+        </Animated.View>
+      ) : null}
 
       <View style={[s.composer, { borderTopColor: line }]}>
         <View style={[s.field, { backgroundColor: field }]}>
           <TextInput
             value={text}
             onChangeText={setText}
-            placeholder="Add a comment…"
+            placeholder={replyTo ? `Reply to ${nameFor(replyTo.deviceId)}…` : 'Add a comment…'}
             placeholderTextColor={c.inkFaint}
             style={[s.input, { color: c.ink }]}
             maxLength={600}
@@ -121,12 +210,7 @@ export function CommentsPanel({ articleId, onClose }: { articleId: string; onClo
             onSubmitEditing={send}
           />
         </View>
-        <Press
-          haptic={false}
-          onPress={send}
-          scaleTo={0.9}
-          style={[s.send, { backgroundColor: text.trim() ? c.brand : field }]}
-        >
+        <Press haptic={false} onPress={send} scaleTo={0.9} style={[s.send, { backgroundColor: text.trim() ? c.brand : field }]}>
           {post.isPending ? (
             <ActivityIndicator size="small" color="#fff" />
           ) : (
@@ -146,21 +230,21 @@ const s = StyleSheet.create({
     paddingBottom: 9,
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
-  close: {
-    width: 26,
-    height: 26,
-    borderRadius: 13,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
+  close: { width: 26, height: 26, borderRadius: 13, alignItems: 'center', justifyContent: 'center' },
   centre: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  row: { flexDirection: 'row', gap: 10, paddingVertical: 7 },
-  avatar: {
-    width: 26,
-    height: 26,
-    borderRadius: 13,
+  row: { flexDirection: 'row', gap: 10, paddingVertical: 7, alignItems: 'flex-start' },
+  avatar: { width: 26, height: 26, borderRadius: 13, alignItems: 'center', justifyContent: 'center' },
+  avatarSmall: { width: 21, height: 21, borderRadius: 11 },
+  metaRow: { flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 3 },
+  heart: { paddingTop: 2, paddingLeft: 8, paddingRight: 2, paddingBottom: 8 },
+  replyBar: {
+    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
+    gap: 8,
+    borderRadius: radius.sm,
+    paddingHorizontal: 11,
+    paddingVertical: 7,
+    marginBottom: 8,
   },
   composer: {
     flexDirection: 'row',
@@ -169,19 +253,7 @@ const s = StyleSheet.create({
     paddingTop: 10,
     borderTopWidth: StyleSheet.hairlineWidth,
   },
-  field: {
-    flex: 1,
-    borderRadius: radius.pill,
-    paddingHorizontal: 14,
-    height: 38,
-    justifyContent: 'center',
-  },
+  field: { flex: 1, borderRadius: radius.pill, paddingHorizontal: 14, height: 38, justifyContent: 'center' },
   input: { fontSize: 14, fontFamily: 'Inter_400Regular', padding: 0 },
-  send: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
+  send: { width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center' },
 });
