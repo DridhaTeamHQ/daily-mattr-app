@@ -163,10 +163,10 @@ export function ArticleRow({
     <Animated.View entering={FadeInDown.delay(Math.min(index, 6) * 50).springify().damping(30).stiffness(250).mass(0.9)}>
       <Press onPress={() => router.push(`/article/${a.id}`)} style={s.rowPlain}>
         <View style={{ flex: 1, paddingRight: 16 }}>
-          <Txt size={15.5} lh={21} weight="bold" ls={-0.3} numberOfLines={2}>
+          <Txt size={16} lh={21.5} weight="bold" ls={-0.35} numberOfLines={3}>
             {a.title}
           </Txt>
-          <Txt size={12} weight="medium" color={c.inkFaint} style={{ marginTop: 6 }}>
+          <Txt size={11.5} weight="medium" color={c.inkFaint} style={{ marginTop: 7 }}>
             {showTopic ? `${a.topic} · ` : ''}
             {timeAgo(a.publishedAt)}
           </Txt>
@@ -214,11 +214,11 @@ export function CarouselCard({ a, index = 0 }: { a: Article; index?: number }) {
             </Txt>
             <LIcon name="badge-check" size={12.5} color={c.brand} />
           </View>
-          <Txt size={15.5} lh={20.5} weight="bold" ls={-0.3} numberOfLines={2} style={{ marginTop: 8 }}>
+          <Txt size={16.5} lh={21.5} weight="bold" ls={-0.4} numberOfLines={2} style={{ marginTop: 9 }}>
             {a.title}
           </Txt>
-          <Txt size={11.5} weight="medium" color={c.inkFaint} style={{ marginTop: 8 }}>
-            {a.topic} · {timeAgo(a.publishedAt)} · {a.readMins} min
+          <Txt size={11.5} weight="medium" color={c.inkFaint} style={{ marginTop: 7 }}>
+            {a.topic} · {timeAgo(a.publishedAt)}
           </Txt>
         </View>
       </Press>
@@ -351,7 +351,7 @@ const s = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 24,
-    paddingVertical: 14,
+    paddingVertical: 15,
   },
   hairline: {
     height: StyleSheet.hairlineWidth,
@@ -359,9 +359,9 @@ const s = StyleSheet.create({
     marginRight: 24,
   },
   thumb: { width: 88, height: 88, borderRadius: 18 },
-  thumbPlain: { width: 62, height: 62, borderRadius: 13 },
+  thumbPlain: { width: 84, height: 84, borderRadius: 17 },
   carCard: {
-    width: 282,
+    width: 296,
     borderRadius: radius.lg,
     padding: 10,
     paddingBottom: 16,
@@ -369,7 +369,7 @@ const s = StyleSheet.create({
   },
   carImage: {
     width: '100%',
-    height: 158,
+    height: 200,
     borderRadius: radius.md,
   },
   carPubDot: { width: 8, height: 8, borderRadius: 4 },

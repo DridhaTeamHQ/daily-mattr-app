@@ -57,6 +57,10 @@ export default function Home() {
     lastY.current = y;
   };
   const [tab, setTab] = useState('For You');
+  const dateLabel = useMemo(
+    () => new Date().toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'short' }),
+    [],
+  );
 
   const active = TABS.find((t) => t.label === tab)!;
 
@@ -157,17 +161,18 @@ export default function Home() {
           </View>
         </Animated.View>
 
-        {/* display headline — skew lives on an inner plain View so the
-            entering animation can't clobber the transform */}
+        {/* editorial header — a quiet dateline over one restrained line.
+            The photography below is the hero, not the type. */}
         <Animated.View
           entering={FadeInDown.delay(40).springify().damping(30).stiffness(250).mass(0.9)}
-          style={{ paddingHorizontal: 24, marginTop: 22 }}
+          style={{ paddingHorizontal: 24, marginTop: 20 }}
         >
-          <View style={{ transform: [{ skewX: '-6deg' }] }}>
-            <Txt size={38} lh={42} weight="extrabold" ls={-1.2} style={{ textTransform: 'uppercase' }}>
-              {"What's new\ntoday?"}
-            </Txt>
-          </View>
+          <Txt size={11} weight="semibold" color={c.inkSoft} ls={1.5} style={{ textTransform: 'uppercase' }}>
+            {greeting()} · {dateLabel}
+          </Txt>
+          <Txt size={26} lh={31} weight="extrabold" ls={-0.9} style={{ marginTop: 7 }}>
+            What&apos;s new today?
+          </Txt>
         </Animated.View>
 
         {/* tabs */}
@@ -204,7 +209,7 @@ export default function Home() {
             <ScrollView
               horizontal
               showsHorizontalScrollIndicator={false}
-              snapToInterval={296}
+              snapToInterval={310}
               decelerationRate="fast"
               contentContainerStyle={{ paddingHorizontal: 24, paddingBottom: 6, paddingTop: 2 }}
             >
