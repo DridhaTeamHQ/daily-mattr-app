@@ -73,6 +73,25 @@ export async function fetchReaderFeed(limit = 40, topics?: string[]): Promise<Ar
   );
 }
 
+/* Pix needs a photo AND the three key points, which the personalized feed
+   RPC does not carry. ~39% of the corpus qualifies, so a plain recency query
+   over the versions payload is enough — no new RPC. */
+export async function fetchPix(limit = 24, topics?: string[]): Promise<Article[]> {
+  let q = supabase
+    .from('articles')
+    .select(ARTICLE_COLS + ',versions')
+    .in('status', PUBLISHED)
+    .not('image_url', 'is', null)
+    .not('versions->tldr', 'is', null);
+  if (topics?.length) q = q.in('topic', expandTopics(topics));
+  const { data, error } = await ordered(q).limit(limit * 2);
+  if (error) throw error;
+  return (data ?? [])
+    .map(mapArticle)
+    .filter((a: Article) => (a.modes?.tldr?.length ?? 0) >= 3 && !!a.imageUrl)
+    .slice(0, limit);
+}
+
 function ordered(q: any) {
   return q
     .order('reviewed_at', { ascending: false, nullsFirst: false })

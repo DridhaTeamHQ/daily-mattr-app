@@ -21,8 +21,9 @@ import Animated, {
 import { useTheme } from '@/lib/theme';
 import { Txt, IconButton, PillTab, Shimmer, Press } from '@/components/ui';
 import { CarouselCard, ArticleRow, CAROUSEL_STRIDE } from '@/components/cards';
+import { PixCard } from '@/components/pixCard';
 import { NAVBAR_CLEARANCE } from '@/components/navbar';
-import { fetchFeed, fetchFeedPage, fetchForYou, fetchTrending, fetchBreaking } from '@/lib/queries';
+import { fetchFeed, fetchFeedPage, fetchForYou, fetchTrending, fetchBreaking, fetchPix } from '@/lib/queries';
 import { getUnreadBreaking } from '@/lib/notifications';
 import { useNavVisibility } from '@/lib/navVisibility';
 
@@ -104,6 +105,11 @@ export default function Home() {
     queryFn: () => fetchFeed({ topics: active.topics, limit: 30 }),
     enabled: !!active.topics,
   });
+  const pix = useQuery({
+    queryKey: ['pix', tab],
+    queryFn: () => fetchPix(12, active.topics),
+    staleTime: 300_000,
+  });
   const unread = useQuery({ queryKey: ['breakingUnread'], queryFn: getUnreadBreaking, staleTime: 120_000 });
   const breakingTop = useQuery({ queryKey: ['breakingTop'], queryFn: () => fetchBreaking(1), staleTime: 120_000 });
 
@@ -123,7 +129,24 @@ export default function Home() {
   }, [feed]);
 
   const carousel = deduped.slice(0, 6);
-  const list = deduped.slice(6, 18); // Latest stays digestible — a page, not a firehose
+
+  // A Pix is a promotion, not an addition: a story that qualifies gets told as a
+  // card instead of a row, so nothing appears twice. Carousel stories are left
+  // alone — they are already the hero treatment.
+  const pixPicks = useMemo(() => {
+    const heroIds = new Set(deduped.slice(0, 6).map((a) => a.id));
+    return (pix.data ?? []).filter((a) => !heroIds.has(a.id)).slice(0, 3);
+  }, [pix.data, deduped]);
+
+  const list = useMemo(() => {
+    const promoted = new Set(pixPicks.map((a) => a.id));
+    const promotedTitles = new Set(pixPicks.map((a) => norm(a.title)));
+    return deduped
+      .slice(6, 20)
+      .filter((a) => !promoted.has(a.id) && !promotedTitles.has(norm(a.title)))
+      .slice(0, 12); // Latest stays digestible — a page, not a firehose
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deduped, pixPicks]);
 
   // one continuous list — older stories stream in via keyset pagination
   const morePages = useInfiniteQuery({
@@ -278,7 +301,12 @@ export default function Home() {
             </View>
             <View>
               {list.map((a, i) => (
-                <ArticleRow key={a.id} a={a} index={i} />
+                <React.Fragment key={a.id}>
+                  <ArticleRow a={a} index={i} />
+                  {i % 4 === 3 && pixPicks[(i - 3) / 4] ? (
+                    <PixCard a={pixPicks[(i - 3) / 4]} index={i} />
+                  ) : null}
+                </React.Fragment>
               ))}
               {older.map((a, i) => (
                 <ArticleRow key={a.id} a={a} index={i} divider={i < older.length - 1} />

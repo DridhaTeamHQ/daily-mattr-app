@@ -18,6 +18,8 @@ export type AppEvent = {
     | 'share'
     | 'like'
     | 'unlike'
+    | 'dislike'
+    | 'undislike'
     | 'skip'
     | 'mode_switch';
   dwell_ms?: number;

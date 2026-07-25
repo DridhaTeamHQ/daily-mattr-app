@@ -27,7 +27,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { colors, radius, spring, topicOf } from '@/theme';
 import { Txt, Headline, Press, Shimmer, BreakingBadge, EasedScrim, LIcon, TopicBubble } from '@/components/ui';
-import { fetchReaderFeed } from '@/lib/queries';
+import { fetchReaderFeed, fetchPix } from '@/lib/queries';
 import { fetchCommentCounts } from '@/lib/comments';
 import { CommentsPanel } from '@/components/commentsPanel';
 import { type Article, timeAgo, isBreaking } from '@/lib/content';
@@ -146,7 +146,10 @@ export default function Reader() {
   const scrollY = useSharedValue(0);
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: ['readerFeed', topicFilter],
-    queryFn: () => fetchReaderFeed(40, topicFilter ? [topicFilter] : undefined),
+    queryFn: () =>
+      topicFilter === PIX_FILTER
+        ? fetchPix(40)
+        : fetchReaderFeed(40, topicFilter ? [topicFilter] : undefined),
     // keep the old deck on screen while the new topic loads — otherwise the
     // loading branch unmounts the dial mid-bloom and the tap looks ignored
     placeholderData: (prev: Article[] | undefined) => prev,
@@ -176,7 +179,10 @@ export default function Reader() {
     loadingMore.current = true;
     try {
       await flushTelemetry(); // impressions raise seen_count so the next batch differs
-      const next = await fetchReaderFeed(40, topicFilter ? [topicFilter] : undefined);
+      const next =
+        topicFilter === PIX_FILTER
+          ? await fetchPix(40)
+          : await fetchReaderFeed(40, topicFilter ? [topicFilter] : undefined);
       setExtra((prev) => {
         const have = new Set([...(data ?? []), ...prev].map((a) => a.id));
         return [...prev, ...next.filter((a) => !have.has(a.id))];
@@ -303,7 +309,7 @@ export default function Reader() {
       {topicFilter ? (
         <View style={[st.filterTag, { top: insets.top + 58 }]}>
           <Txt size={11.5} weight="bold" color="#fff">
-            {topicFilter}
+            {topicFilter === PIX_FILTER ? 'Pix' : topicFilter}
           </Txt>
         </View>
       ) : null}
@@ -369,7 +375,8 @@ const SHEET_LIGHT = 'rgba(255,255,255,0.62)';
 const SHEET_DARK = 'rgba(12,17,29,0.58)';
 
 const WHEEL_ROW = 108;
-const WHEEL_ITEMS: (string | null)[] = [null, ...READER_TOPICS]; // null = For You
+export const PIX_FILTER = '•Pix'; // sentinel, not a real topic
+const WHEEL_ITEMS: (string | null)[] = [null, PIX_FILTER, ...READER_TOPICS]; // null = For You
 
 /* The dial is a half-circle hinged off the right edge: every topic is placed
    by its angle, so the focused one swings out toward the middle of the screen
@@ -453,7 +460,7 @@ function TopicWheel({
       </GestureDetector>
       {WHEEL_ITEMS.map((t, i) => (
         <ArcBubble key={t ?? 'foryou'} index={i} spin={spin} cy={cy} ry={ry}>
-          {t === null ? (
+          {t === null || t === PIX_FILTER ? (
             <Press
               haptic={false}
               onPress={() => {
@@ -463,12 +470,19 @@ function TopicWheel({
               scaleTo={0.94}
               style={{ alignItems: 'center' }}
             >
-              <View style={[st.forYouBubble, { backgroundColor: brand }]}>
-                <LIcon name="sparkles" size={20} color="#fff" strokeWidth={2.2} />
+              {/* Pix is a format, not a topic, so it gets its own bubble rather
+                  than a topic artwork and the sentinel showing through */}
+              <LinearGradient
+                colors={t === null ? [brand, brand] : ['#9B6CFF', '#5B2BD9']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={st.forYouBubble}
+              >
+                <LIcon name={t === null ? 'sparkles' : 'images'} size={20} color="#fff" strokeWidth={2.2} />
                 <Txt size={12} weight="bold" color="#fff" style={{ marginTop: 3 }}>
-                  For You
+                  {t === null ? 'For You' : 'Pix'}
                 </Txt>
-              </View>
+              </LinearGradient>
             </Press>
           ) : (
             <TopicBubble
