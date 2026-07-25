@@ -137,6 +137,8 @@ export default function Reader() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const closeDial = useCallback(() => openDrawer(false), []);
+
   const backdropFade = useAnimatedStyle(() => ({ opacity: 1 - reveal.value }));
   const wheelFade = useAnimatedStyle(() => ({ opacity: Math.max(0, 1 - reveal.value * 2.2) }));
   const bubbleBloom = useAnimatedStyle(() => ({
@@ -323,7 +325,7 @@ export default function Reader() {
           <TopicWheel
             selected={topicFilter}
             onSelect={handleDialSelect}
-            onClose={() => openDrawer(false)}
+            onClose={closeDial}
             brand={c.brand}
             spin={spin}
           />
@@ -355,8 +357,8 @@ export default function Reader() {
 // The blend zone: how far the glass takes to melt from clear to readable.
 // Long on purpose — a short ramp reads as an edge.
 const FEATHER = 178;
-const SHEET_LIGHT = 'rgba(255,255,255,0.72)';
-const SHEET_DARK = 'rgba(12,17,29,0.78)';
+const SHEET_LIGHT = 'rgba(255,255,255,0.62)';
+const SHEET_DARK = 'rgba(12,17,29,0.58)';
 
 const WHEEL_ROW = 108;
 const WHEEL_ITEMS: (string | null)[] = [null, ...READER_TOPICS]; // null = For You
@@ -407,8 +409,6 @@ function TopicWheel({
   // wheel from any empty space, throws with the flick, and settles on a detent.
   // Tapping that same empty space dismisses.
   const dragFrom = useSharedValue(0);
-  const cb = useRef(onClose);
-  cb.current = onClose;
   const browse = useMemo(() => {
     const drag = Gesture.Pan()
       .minDistance(6)
@@ -423,11 +423,11 @@ function TopicWheel({
         spin.value = withSpring(Math.round(thrown), spring.gentle);
       });
     const dismiss = Gesture.Tap().onEnd((_e, ok) => {
-      if (ok) runOnJS(cb.current)();
+      if (ok) runOnJS(onClose)();
     });
     return Gesture.Exclusive(drag, dismiss);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [onClose]);
 
   // a detent every time a new topic takes the focus point
   useAnimatedReaction(
@@ -635,7 +635,7 @@ function ReaderCard({ a, height, topInset }: { a: Article; height: number; topIn
   const imgSource = a.imageUrl ? { uri: a.imageUrl } : artFor(a.topic);
   // ambient glass: the article's own image, heavily blurred, becomes the
   // card's backdrop so its palette bleeds through the whole surface
-  const tint = isDark ? 'rgba(8,11,20,0.62)' : 'rgba(255,255,255,0.32)';
+  const tint = isDark ? 'rgba(8,11,20,0.40)' : 'rgba(255,255,255,0.26)';
   // sharp image dissolves via a TRUE alpha mask — no bands, no seams
   const fadeH = imgH + 110;
 
@@ -724,19 +724,19 @@ function ReaderCard({ a, height, topInset }: { a: Article; height: number; topIn
             isDark
               ? ([
                   'rgba(12,17,29,0)',
-                  'rgba(12,17,29,0.08)',
-                  'rgba(12,17,29,0.24)',
-                  'rgba(12,17,29,0.48)',
-                  'rgba(12,17,29,0.66)',
+                  'rgba(12,17,29,0.07)',
+                  'rgba(12,17,29,0.19)',
+                  'rgba(12,17,29,0.37)',
+                  'rgba(12,17,29,0.50)',
                   SHEET_DARK,
                   SHEET_DARK,
                 ] as any)
               : ([
                   'rgba(255,255,255,0)',
-                  'rgba(255,255,255,0.08)',
-                  'rgba(255,255,255,0.24)',
-                  'rgba(255,255,255,0.46)',
-                  'rgba(255,255,255,0.63)',
+                  'rgba(255,255,255,0.07)',
+                  'rgba(255,255,255,0.20)',
+                  'rgba(255,255,255,0.40)',
+                  'rgba(255,255,255,0.54)',
                   SHEET_LIGHT,
                   SHEET_LIGHT,
                 ] as any)
