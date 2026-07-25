@@ -921,26 +921,6 @@ const s = StyleSheet.create({
     paddingHorizontal: 13,
     paddingVertical: 7,
   },
-  tldrNum: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: 1,
-  },
-  numCard: {
-    borderRadius: radius.md,
-    paddingHorizontal: 17,
-    paddingVertical: 13,
-  },
-  eli5Tag: {
-    alignSelf: 'flex-start',
-    borderRadius: radius.pill,
-    paddingHorizontal: 11,
-    paddingVertical: 5,
-    marginBottom: 12,
-  },
   footer: {
     flexDirection: 'row',
     alignItems: 'center',

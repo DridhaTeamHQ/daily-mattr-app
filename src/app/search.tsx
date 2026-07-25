@@ -1,5 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { View, TextInput, StyleSheet, ActivityIndicator, ScrollView } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { useQuery } from '@tanstack/react-query';
@@ -12,6 +13,8 @@ import { ArticleRow } from '@/components/cards';
 import { searchSemantic, fetchTrending } from '@/lib/queries';
 
 const SUGGESTIONS = ['AI', 'Elections', 'Markets', 'Startups', 'Cricket', 'Space', 'EV'];
+const RECENT_KEY = 'dailymattr.recent.v1';
+const RECENT_MAX = 6;
 
 export default function Search() {
   const { c, isDark } = useTheme();
@@ -19,11 +22,38 @@ export default function Search() {
   const router = useRouter();
   const [text, setText] = useState('');
   const [q, setQ] = useState('');
+  const [recent, setRecent] = useState<string[]>([]);
 
   useEffect(() => {
     const t = setTimeout(() => setQ(text.trim()), 320);
     return () => clearTimeout(t);
   }, [text]);
+
+  useEffect(() => {
+    AsyncStorage.getItem(RECENT_KEY).then((v) => {
+      if (v) {
+        try {
+          setRecent(JSON.parse(v));
+        } catch {}
+      }
+    });
+  }, []);
+
+  // remember a term once it actually returned something worth keeping
+  const remember = useCallback((term: string) => {
+    const clean = term.trim();
+    if (clean.length < 2) return;
+    setRecent((prev) => {
+      const next = [clean, ...prev.filter((r) => r.toLowerCase() !== clean.toLowerCase())].slice(0, RECENT_MAX);
+      AsyncStorage.setItem(RECENT_KEY, JSON.stringify(next));
+      return next;
+    });
+  }, []);
+
+  const clearRecent = () => {
+    setRecent([]);
+    AsyncStorage.removeItem(RECENT_KEY);
+  };
 
   const { data: sr, isFetching } = useQuery({
     queryKey: ['search', q],
@@ -31,6 +61,10 @@ export default function Search() {
     enabled: q.length >= 2,
   });
   const data = sr?.results;
+
+  useEffect(() => {
+    if (q.length >= 2 && !isFetching && (data ?? []).length > 0) remember(q);
+  }, [q, isFetching, data, remember]);
 
   const trending = useQuery({ queryKey: ['trending'], queryFn: () => fetchTrending(6) });
 
@@ -49,14 +83,51 @@ export default function Search() {
             style={[s.input, { color: c.ink }]}
             returnKeyType="search"
           />
-          {isFetching ? <ActivityIndicator size="small" color={c.brand} /> : null}
+          {isFetching ? (
+            <ActivityIndicator size="small" color={c.brand} />
+          ) : text.length > 0 ? (
+            <Press onPress={() => setText('')} scaleTo={0.85} style={{ padding: 4 }}>
+              <LIcon name="x" size={16} color={c.inkFaint} />
+            </Press>
+          ) : null}
         </View>
       </Animated.View>
 
       <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingTop: 16, paddingBottom: 24 }}>
         {q.length < 2 ? (
           <>
-            <Txt size={13} weight="semibold" color={c.inkSoft} ls={0.4} style={{ paddingHorizontal: 20, textTransform: 'uppercase' }}>
+            {recent.length > 0 ? (
+              <>
+                <View style={s.sectionRow}>
+                  <Txt size={13} weight="semibold" color={c.inkSoft} ls={0.4} style={{ textTransform: 'uppercase' }}>
+                    Recent
+                  </Txt>
+                  <Press onPress={clearRecent} scaleTo={0.94} style={{ padding: 4 }}>
+                    <Txt size={12.5} weight="semibold" color={c.brand}>
+                      Clear
+                    </Txt>
+                  </Press>
+                </View>
+                {recent.map((r, i) => (
+                  <Animated.View key={r} entering={FadeInDown.delay(i * 40)}>
+                    <Press onPress={() => setText(r)} style={s.recentRow}>
+                      <LIcon name="clock" size={15} color={c.inkFaint} />
+                      <Txt size={14.5} weight="medium" color={c.ink} numberOfLines={1} style={{ flex: 1 }}>
+                        {r}
+                      </Txt>
+                      <LIcon name="arrow-up-left" size={15} color={c.inkFaint} />
+                    </Press>
+                  </Animated.View>
+                ))}
+              </>
+            ) : null}
+            <Txt
+              size={13}
+              weight="semibold"
+              color={c.inkSoft}
+              ls={0.4}
+              style={{ paddingHorizontal: 20, marginTop: recent.length ? 26 : 0, textTransform: 'uppercase' }}
+            >
               Trending searches
             </Txt>
             <View style={s.chipsWrap}>
@@ -94,6 +165,20 @@ export default function Search() {
 }
 
 const s = StyleSheet.create({
+  sectionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    marginBottom: 4,
+  },
+  recentRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingHorizontal: 20,
+    paddingVertical: 11,
+  },
   bar: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12 },
   inputWrap: {
     flex: 1,

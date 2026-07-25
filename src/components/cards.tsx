@@ -4,7 +4,13 @@ import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { soft } from '@/lib/haptics';
 import { useRouter } from 'expo-router';
-import Animated, { FadeInDown } from 'react-native-reanimated';
+import Animated, {
+  FadeInDown,
+  useAnimatedStyle,
+  interpolate,
+  Extrapolation,
+  type SharedValue,
+} from 'react-native-reanimated';
 import { colors, radius, shadow, topicOf } from '@/theme';
 import { useTheme, glassCard } from '@/lib/theme';
 import { StoryTitle, CardTitle, Txt, Press, BreakingBadge, EasedScrim, LIcon } from './ui';
@@ -186,14 +192,36 @@ export function ArticleRow({
 
 /* ---------- Carousel story card (GLOBAL-reference style) ---------- */
 
-export function CarouselCard({ a, index = 0 }: { a: Article; index?: number }) {
+export const CAROUSEL_STRIDE = 310; // card width + gap
+
+export function CarouselCard({
+  a,
+  index = 0,
+  scrollX,
+}: {
+  a: Article;
+  index?: number;
+  scrollX?: SharedValue<number>;
+}) {
   const router = useRouter();
   const { c, isDark } = useTheme();
   const t = topicOf(a.topic);
   useEffect(() => trackImpression(a.id, a.topic), [a.id, a.topic]);
 
+  // the card under the thumb sits forward; its neighbours settle back
+  const focus = useAnimatedStyle(() => {
+    if (!scrollX) return {};
+    const d = Math.abs(scrollX.value - index * CAROUSEL_STRIDE);
+    return {
+      transform: [{ scale: interpolate(d, [0, CAROUSEL_STRIDE], [1, 0.945], Extrapolation.CLAMP) }],
+      opacity: interpolate(d, [0, CAROUSEL_STRIDE * 1.15], [1, 0.72], Extrapolation.CLAMP),
+    };
+  });
+
   return (
     <Animated.View entering={FadeInDown.delay(Math.min(index, 5) * 70).springify().damping(30).stiffness(250).mass(0.9)}>
+      {/* transform lives on an inner view so the entering animation can't clobber it */}
+      <Animated.View style={focus}>
       <Press
         onPress={() => router.push(`/article/${a.id}`)}
         scaleTo={0.975}
@@ -222,6 +250,7 @@ export function CarouselCard({ a, index = 0 }: { a: Article; index?: number }) {
           </Txt>
         </View>
       </Press>
+      </Animated.View>
     </Animated.View>
   );
 }

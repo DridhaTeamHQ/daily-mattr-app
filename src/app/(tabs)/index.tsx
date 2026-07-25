@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { View, ScrollView, StyleSheet, RefreshControl, NativeSyntheticEvent, NativeScrollEvent } from 'react-native';
+import { View, ScrollView, StyleSheet, RefreshControl } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useQuery, useInfiniteQuery } from '@tanstack/react-query';
 import { useRouter } from 'expo-router';
@@ -10,13 +10,17 @@ import Animated, {
   FadeIn,
   useSharedValue,
   useAnimatedStyle,
+  useAnimatedScrollHandler,
+  interpolate,
+  Extrapolation,
+  runOnJS,
   withRepeat,
   withSequence,
   withTiming,
 } from 'react-native-reanimated';
 import { useTheme } from '@/lib/theme';
 import { Txt, IconButton, PillTab, Shimmer, Press } from '@/components/ui';
-import { CarouselCard, ArticleRow } from '@/components/cards';
+import { CarouselCard, ArticleRow, CAROUSEL_STRIDE } from '@/components/cards';
 import { NAVBAR_CLEARANCE } from '@/components/navbar';
 import { fetchFeed, fetchFeedPage, fetchForYou, fetchTrending, fetchBreaking } from '@/lib/queries';
 import { getUnreadBreaking } from '@/lib/notifications';
@@ -47,15 +51,40 @@ export default function Home() {
   const router = useRouter();
   const { c, isDark, toggle } = useTheme();
   const nav = useNavVisibility();
-  const lastY = React.useRef(0);
-  const onNavScroll = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
-    const y = e.nativeEvent.contentOffset.y;
-    const dy = y - lastY.current;
-    if (y < 60) nav.show();
-    else if (dy > 14) nav.hide();
-    else if (dy < -14) nav.show();
-    lastY.current = y;
-  };
+  const scrollY = useSharedValue(0);
+  const lastY = useSharedValue(0);
+  const navShown = useSharedValue(1);
+  const carouselX = useSharedValue(0);
+
+  // Runs on the UI thread, and only crosses to JS when visibility actually
+  // changes — the old handler called show()/hide() on every scroll event.
+  const onScroll = useAnimatedScrollHandler((e) => {
+    const y = e.contentOffset.y;
+    scrollY.value = y;
+    const dy = y - lastY.value;
+    if (y < 60) {
+      if (navShown.value !== 1) {
+        navShown.value = 1;
+        runOnJS(nav.show)();
+      }
+    } else if (dy > 14 && navShown.value !== 0) {
+      navShown.value = 0;
+      runOnJS(nav.hide)();
+    } else if (dy < -14 && navShown.value !== 1) {
+      navShown.value = 1;
+      runOnJS(nav.show)();
+    }
+    lastY.value = y;
+  });
+  const onCarouselScroll = useAnimatedScrollHandler((e) => {
+    carouselX.value = e.contentOffset.x;
+  });
+
+  // the masthead gives way to the stories as you go
+  const headerStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(scrollY.value, [0, 84], [1, 0], Extrapolation.CLAMP),
+    transform: [{ translateY: interpolate(scrollY.value, [0, 130], [0, -22], Extrapolation.CLAMP) }],
+  }));
   const [tab, setTab] = useState('For You');
   const dateLabel = useMemo(
     () => new Date().toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'short' }),
@@ -118,6 +147,10 @@ export default function Home() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [morePages.data, deduped]);
 
+  // a short page means the feed is exhausted — stop offering "More stories"
+  const pages = morePages.data?.pages;
+  const exhausted = !!pages && pages.length > 0 && pages[pages.length - 1].length < 15;
+
   const refetchAll = () => {
     forYou.refetch();
     if (tab === 'Trending') trending.refetch();
@@ -136,11 +169,11 @@ export default function Home() {
   return (
     <View style={{ flex: 1, backgroundColor: c.bg }}>
       <LinearGradient colors={c.canvas} style={StyleSheet.absoluteFill} />
-      <ScrollView
+      <Animated.ScrollView
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{ paddingTop: insets.top + 14, paddingBottom: NAVBAR_CLEARANCE + 16 }}
-        onScroll={onNavScroll}
-        scrollEventThrottle={32}
+        onScroll={onScroll}
+        scrollEventThrottle={16}
         refreshControl={<RefreshControl refreshing={false} tintColor={c.brand} onRefresh={refetchAll} />}
       >
         {/* quiet header */}
@@ -167,12 +200,14 @@ export default function Home() {
           entering={FadeInDown.delay(40).springify().damping(30).stiffness(250).mass(0.9)}
           style={{ paddingHorizontal: 24, marginTop: 20 }}
         >
-          <Txt size={11} weight="semibold" color={c.inkSoft} ls={1.5} style={{ textTransform: 'uppercase' }}>
-            {greeting()} · {dateLabel}
-          </Txt>
-          <Txt display size={28} lh={33} weight="extrabold" ls={-1.0} style={{ marginTop: 6 }}>
-            What&apos;s new today?
-          </Txt>
+          <Animated.View style={headerStyle}>
+            <Txt size={11} weight="semibold" color={c.inkSoft} ls={1.5} style={{ textTransform: 'uppercase' }}>
+              {greeting()} · {dateLabel}
+            </Txt>
+            <Txt display size={28} lh={33} weight="extrabold" ls={-1.0} style={{ marginTop: 6 }}>
+              What&apos;s new today?
+            </Txt>
+          </Animated.View>
         </Animated.View>
 
         {/* tabs */}
@@ -206,17 +241,19 @@ export default function Home() {
                 </Txt>
               </Press>
             </View>
-            <ScrollView
+            <Animated.ScrollView
               horizontal
               showsHorizontalScrollIndicator={false}
-              snapToInterval={310}
+              snapToInterval={CAROUSEL_STRIDE}
               decelerationRate="fast"
+              onScroll={onCarouselScroll}
+              scrollEventThrottle={16}
               contentContainerStyle={{ paddingHorizontal: 24, paddingBottom: 6, paddingTop: 2 }}
             >
               {carousel.map((a, i) => (
-                <CarouselCard key={a.id} a={a} index={i} />
+                <CarouselCard key={a.id} a={a} index={i} scrollX={carouselX} />
               ))}
-            </ScrollView>
+            </Animated.ScrollView>
 
             {/* one-line breaking strip */}
             {showBreaking ? (
@@ -246,19 +283,27 @@ export default function Home() {
               {older.map((a, i) => (
                 <ArticleRow key={a.id} a={a} index={i} divider={i < older.length - 1} />
               ))}
-              <Press
-                onPress={() => morePages.fetchNextPage()}
-                scaleTo={0.97}
-                style={[s.moreBtn, { borderColor: isDark ? 'rgba(255,255,255,0.16)' : 'rgba(11,13,18,0.14)' }]}
-              >
-                <Txt size={14} weight="semibold" color={c.inkSoft}>
-                  {morePages.isFetchingNextPage ? 'Loading…' : 'More stories'}
-                </Txt>
-              </Press>
+              {exhausted ? (
+                <Animated.View entering={FadeIn.duration(300)} style={s.caughtUp}>
+                  <Txt size={13.5} weight="semibold" color={c.inkFaint}>
+                    That&apos;s everything for now
+                  </Txt>
+                </Animated.View>
+              ) : (
+                <Press
+                  onPress={() => morePages.fetchNextPage()}
+                  scaleTo={0.97}
+                  style={[s.moreBtn, { borderColor: isDark ? 'rgba(255,255,255,0.16)' : 'rgba(11,13,18,0.14)' }]}
+                >
+                  <Txt size={14} weight="semibold" color={c.inkSoft}>
+                    {morePages.isFetchingNextPage ? 'Loading…' : 'More stories'}
+                  </Txt>
+                </Press>
+              )}
             </View>
           </>
         )}
-      </ScrollView>
+      </Animated.ScrollView>
     </View>
   );
 }
@@ -273,6 +318,11 @@ function PulseDot() {
 }
 
 const s = StyleSheet.create({
+  caughtUp: {
+    alignItems: 'center',
+    paddingVertical: 28,
+    marginTop: 8,
+  },
   moreBtn: {
     marginHorizontal: 24,
     marginTop: 20,
