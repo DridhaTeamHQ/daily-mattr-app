@@ -3,6 +3,7 @@ import { View, StyleSheet, Dimensions, Share, LayoutChangeEvent, useWindowDimens
 import MaskedView from '@react-native-masked-view/masked-view';
 import { BlurView } from 'expo-blur';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useQuery } from '@tanstack/react-query';
 import { Image } from 'expo-image';
@@ -27,6 +28,7 @@ import Animated, {
 import { colors, radius, spring, topicOf } from '@/theme';
 import { Txt, Headline, Press, Shimmer, BreakingBadge, EasedScrim, LIcon, TopicBubble } from '@/components/ui';
 import { fetchReaderFeed } from '@/lib/queries';
+import { fetchCommentCounts } from '@/lib/comments';
 import { type Article, timeAgo, isBreaking } from '@/lib/content';
 import { useStore } from '@/lib/store';
 import { useTheme } from '@/lib/theme';
@@ -152,6 +154,13 @@ export default function Reader() {
     return [...(data ?? []), ...extra.filter((a) => !seenIds.has(a.id))];
   }, [data, extra]);
 
+  const commentCounts = useQuery({
+    queryKey: ['commentCounts', (data ?? []).slice(0, 40).map((a) => a.id).join(',')],
+    queryFn: () => fetchCommentCounts((data ?? []).slice(0, 40).map((a) => a.id)),
+    enabled: !!data?.length,
+    staleTime: 60_000,
+  });
+
   const listRef = useRef<any>(null);
   React.useEffect(() => {
     setExtra([]);
@@ -178,15 +187,16 @@ export default function Reader() {
   });
 
   const topInset = insets.top;
+  const counts = commentCounts.data ?? {};
   const renderPage = useCallback(
     ({ item, index }: { item: Article; index: number }) => (
       <PageShell index={index} pageH={pageH} scrollY={scrollY}>
-        <ReaderCardMemo a={item} height={pageH} topInset={topInset} />
+        <ReaderCardMemo a={item} height={pageH} topInset={topInset} commentCount={counts[item.id] ?? 0} />
       </PageShell>
     ),
     // scrollY is a stable shared value ref
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [pageH, topInset],
+    [pageH, topInset, counts],
   );
 
   const { recordRead } = useStore();
@@ -574,11 +584,54 @@ function PageShell({ index, pageH, scrollY, children }: { index: number; pageH: 
   return <Animated.View style={[{ height: pageH }, a]}>{children}</Animated.View>;
 }
 
-const ReaderCardMemo = React.memo(ReaderCard, (p, n) => p.a.id === n.a.id && p.height === n.height && p.topInset === n.topInset);
+const ReaderCardMemo = React.memo(
+  ReaderCard,
+  (p, n) => p.a.id === n.a.id && p.height === n.height && p.topInset === n.topInset && p.commentCount === n.commentCount,
+);
 
-function ReaderCard({ a, height, topInset }: { a: Article; height: number; topInset: number }) {
+function ReaderCard({
+  a,
+  height,
+  topInset,
+  commentCount = 0,
+}: {
+  a: Article;
+  height: number;
+  topInset: number;
+  commentCount?: number;
+}) {
   const { c, isDark } = useTheme();
+  const router = useRouter();
   const nav = useNavVisibility();
+
+  // Pull the card rightward to open the publisher's own page. activeOffsetX
+  // keeps it from stealing the vertical paging gesture, and failOffsetY bails
+  // the moment the drag is really a scroll.
+  const openSource = () => {
+    track({ article_id: a.id, event_type: 'open_full', topic: a.topic });
+    WebBrowser.openBrowserAsync(a.url);
+  };
+  const drag = useSharedValue(0);
+  const swipeToSource = useMemo(
+    () =>
+      Gesture.Pan()
+        .activeOffsetX(18)
+        .failOffsetY([-14, 14])
+        .onUpdate((e) => {
+          drag.value = Math.max(0, Math.min(e.translationX, 130));
+        })
+        .onEnd((e) => {
+          if (e.translationX > 96) runOnJS(openSource)();
+          drag.value = withSpring(0, spring.snappy);
+        }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [a.id, a.url],
+  );
+  const dragStyle = useAnimatedStyle(() => ({ transform: [{ translateX: drag.value * 0.5 }] }));
+  const hintStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(drag.value, [0, 40, 96], [0, 0.5, 1], Extrapolation.CLAMP),
+    transform: [{ scale: interpolate(drag.value, [0, 96], [0.8, 1], Extrapolation.CLAMP) }],
+  }));
   const t = topicOf(a.topic);
   const { isSaved, toggleSaved, isLiked, toggleLiked } = useStore();
   const [burst, setBurst] = useState(0);
@@ -628,7 +681,18 @@ function ReaderCard({ a, height, topInset }: { a: Article; height: number; topIn
   );
 
   return (
-    <Pressable onPress={() => nav.toggle()} style={{ height, backgroundColor: c.bg, overflow: 'hidden' }}>
+    <GestureDetector gesture={swipeToSource}>
+      <Animated.View style={[{ height, backgroundColor: c.bg, overflow: 'hidden' }, dragStyle]}>
+        {/* revealed as the card is pulled across */}
+        <Animated.View pointerEvents="none" style={[s.sourceHint, { top: height / 2 - 26 }, hintStyle]}>
+          <View style={[s.sourceHintCircle, { backgroundColor: c.brand }]}>
+            <LIcon name="external-link" size={19} color="#fff" strokeWidth={2.2} />
+          </View>
+          <Txt size={10.5} weight="bold" color={c.ink} style={{ marginTop: 6 }}>
+            Source
+          </Txt>
+        </Animated.View>
+    <Pressable onPress={() => nav.toggle()} style={{ flex: 1 }}>
       <Image
         source={imgSource}
         style={StyleSheet.absoluteFill}
@@ -804,18 +868,27 @@ function ReaderCard({ a, height, topInset }: { a: Article; height: number; topIn
               haptic={false}
               scaleTo={0.9}
               onPress={() => {
-                track({ article_id: a.id, event_type: 'open_full', topic: a.topic });
-                WebBrowser.openBrowserAsync(a.url);
+                tick();
+                router.push({ pathname: '/comments/[id]', params: { id: a.id } });
               }}
               style={[s.actionCircle, { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(11,13,18,0.045)' }]}
             >
-              <LIcon name="external-link" size={16} color={c.ink} />
+              <LIcon name="message-circle" size={16} color={c.ink} />
+              {commentCount > 0 ? (
+                <View style={[s.countBadge, { backgroundColor: c.brand }]}>
+                  <Txt size={9.5} weight="bold" color="#fff">
+                    {commentCount > 99 ? '99+' : commentCount}
+                  </Txt>
+                </View>
+              ) : null}
             </Press>
           </View>
         </View>
         </View>
       </View>
-    </Pressable>
+        </Pressable>
+      </Animated.View>
+    </GestureDetector>
   );
 }
 
@@ -917,6 +990,31 @@ function BurstDot({ angle, v }: { angle: number; v: SharedValue<number> }) {
 }
 
 const s = StyleSheet.create({
+  sourceHint: {
+    position: 'absolute',
+    left: 18,
+    alignItems: 'center',
+    zIndex: 5,
+  },
+  sourceHintCircle: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    alignItems: 'center',
+    justifyContent: 'center',
+    boxShadow: '0 8px 24px rgba(57,121,255,0.45)',
+  },
+  countBadge: {
+    position: 'absolute',
+    top: -2,
+    right: -3,
+    minWidth: 17,
+    height: 17,
+    borderRadius: 9,
+    paddingHorizontal: 4,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   cardTop: {
     position: 'absolute',
     left: 22,
