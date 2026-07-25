@@ -84,11 +84,21 @@ export const font = {
   extrabold: 'Inter_800ExtraBold',
 } as const;
 
+// Display voice. Newsreader was commissioned by Google Fonts for on-screen
+// long-form news and is drawn to pair with a neutral UI sans — headlines get
+// editorial authority, Inter keeps carrying every UI surface.
+export const serif = {
+  regular: 'Newsreader_400Regular',
+  semibold: 'Newsreader_600SemiBold',
+  bold: 'Newsreader_700Bold',
+  extrabold: 'Newsreader_800ExtraBold',
+} as const;
+
 // Extreme hierarchy — type dominates the interface.
 export const type = {
-  hero: { size: 40, lh: 44, ls: -1.4, f: font.extrabold },
-  storyTitle: { size: 32, lh: 37, ls: -1.0, f: font.extrabold },
-  headline: { size: 28, lh: 33, ls: -0.8, f: font.extrabold },
+  hero: { size: 40, lh: 46, ls: -1.0, f: serif.extrabold },
+  storyTitle: { size: 32, lh: 38, ls: -0.6, f: serif.bold },
+  headline: { size: 28, lh: 35, ls: -0.4, f: serif.bold },
   section: { size: 23, lh: 28, ls: -0.6, f: font.bold },
   cardTitle: { size: 17.5, lh: 23, ls: -0.4, f: font.bold },
   subtitle: { size: 16, lh: 22, ls: -0.2, f: font.medium },

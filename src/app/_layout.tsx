@@ -16,6 +16,12 @@ import {
   Inter_700Bold,
   Inter_800ExtraBold,
 } from '@expo-google-fonts/inter';
+import {
+  Newsreader_400Regular,
+  Newsreader_600SemiBold,
+  Newsreader_700Bold,
+  Newsreader_800ExtraBold,
+} from '@expo-google-fonts/newsreader';
 import { StoreProvider } from '@/lib/store';
 import { ThemeProvider, useTheme } from '@/lib/theme';
 import { NavVisibilityProvider } from '@/lib/navVisibility';
@@ -41,6 +47,10 @@ export default function RootLayout() {
     Inter_600SemiBold,
     Inter_700Bold,
     Inter_800ExtraBold,
+    Newsreader_400Regular,
+    Newsreader_600SemiBold,
+    Newsreader_700Bold,
+    Newsreader_800ExtraBold,
   });
 
   useEffect(() => {

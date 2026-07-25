@@ -20,6 +20,7 @@ import Animated, {
   useAnimatedReaction,
   runOnJS,
   withTiming,
+  withSequence,
   Easing,
   type SharedValue,
 } from 'react-native-reanimated';
@@ -304,6 +305,12 @@ export default function Reader() {
    Big artwork bubbles centered over a dimmed backdrop; drag to spin with
    haptic detents — the centered bubble swells into the ring; tap to choose. */
 
+// The blend zone: how far the glass takes to melt from clear to readable.
+// Long on purpose — a short ramp reads as an edge.
+const FEATHER = 178;
+const SHEET_LIGHT = 'rgba(255,255,255,0.92)';
+const SHEET_DARK = 'rgba(12,17,29,0.93)';
+
 const WHEEL_ROW = 108;
 const WHEEL_ITEMS: (string | null)[] = [null, ...READER_TOPICS]; // null = For You
 
@@ -317,7 +324,11 @@ function TopicWheel({
   brand: string;
 }) {
   const wheelY = useSharedValue(0);
-  const [wheelH, setWheelH] = useState(0);
+  // onLayout can report 0 on a freshly-mounted overlay, which would leave the
+  // dial empty — fall back to the window like the deck does for page height
+  const { height: winH } = useWindowDimensions();
+  const [measured, setMeasured] = useState(0);
+  const wheelH = measured > 100 ? measured : winH;
   const scrollRef = useRef<any>(null);
 
   const onWheelScroll = useAnimatedScrollHandler((e) => {
@@ -347,9 +358,10 @@ function TopicWheel({
     <View
       style={StyleSheet.absoluteFill}
       pointerEvents="box-none"
-      onLayout={(e) => setWheelH(e.nativeEvent.layout.height)}
+      onLayout={(e) => setMeasured(e.nativeEvent.layout.height)}
     >
-      {wheelH > 0 ? (
+      <View pointerEvents="none" style={st.centerRing} />
+      {(
         <Animated.ScrollView
           ref={scrollRef}
           onScroll={onWheelScroll}
@@ -382,21 +394,34 @@ function TopicWheel({
             </WheelRow>
           ))}
         </Animated.ScrollView>
-      ) : null}
+      )}
     </View>
   );
 }
+
+/* Rows ride a circle rather than a straight line: each is placed by its angle
+   on the dial, so bubbles swing out to the right at the centre and curve away
+   left — and tilt as they go — like a physical rotary wheel turning past you. */
+const ARC_STEP = 0.4; // radians between neighbours
+const ARC_RY = WHEEL_ROW / Math.sin(ARC_STEP); // keeps centre spacing ~WHEEL_ROW
+const ARC_RX = 108; // how far the dial bulges toward the reader
 
 function WheelRow({ index, wheelY, children }: { index: number; wheelY: SharedValue<number>; children: React.ReactNode }) {
   const a = useAnimatedStyle(() => {
     const d = index - wheelY.value / WHEEL_ROW;
     const ad = Math.abs(d);
+    // clamp before the circle turns past its own crest, else far rows swing
+    // back down and pile up on the visible ones
+    const theta = Math.max(-1.15, Math.min(1.15, d * ARC_STEP));
     return {
       transform: [
-        { scale: interpolate(ad, [0, 1, 2, 3.5], [1.24, 0.78, 0.58, 0.44], Extrapolation.CLAMP) },
-        { translateY: d * -6 }, // rows gather slightly toward the center
+        // undo the linear stacking, then re-place on the circle
+        { translateY: ARC_RY * Math.sin(theta) - d * WHEEL_ROW },
+        { translateX: -(1 - Math.cos(theta)) * ARC_RX },
+        { rotateZ: `${theta * 26}deg` },
+        { scale: interpolate(ad, [0, 1, 2, 3.5], [1.3, 0.8, 0.58, 0.44], Extrapolation.CLAMP) },
       ],
-      opacity: interpolate(ad, [0, 1, 2, 3], [1, 0.5, 0.24, 0.08], Extrapolation.CLAMP),
+      opacity: interpolate(ad, [0, 1, 2, 3], [1, 0.52, 0.2, 0], Extrapolation.CLAMP),
     };
   });
   return (
@@ -481,6 +506,16 @@ function ReaderCard({ a, height, topInset }: { a: Article; height: number; topIn
   const saved = isSaved(a.id);
   const liked = isLiked(a.id);
 
+  const heartPop = useSharedValue(0);
+  React.useEffect(() => {
+    if (!liked) return;
+    heartPop.value = withSequence(
+      withTiming(1, { duration: 120, easing: Easing.out(Easing.quad) }),
+      withTiming(0, { duration: 240, easing: Easing.out(Easing.cubic) }),
+    );
+  }, [liked, heartPop]);
+  const heartStyle = useAnimatedStyle(() => ({ transform: [{ scale: 1 + heartPop.value * 0.34 }] }));
+
   const modes = useMemo(() => {
     const avail: Mode[] = ['summary'];
     if (a.modes?.eli5) avail.push('eli5');
@@ -498,12 +533,19 @@ function ReaderCard({ a, height, topInset }: { a: Article; height: number; topIn
 
   const imgH = Math.max(height * 0.36, 240);
 
+  // ramp occupies exactly FEATHER px of a sheet that runs to the bottom
+  const sheetStops = useMemo(() => {
+    const sheetH = Math.max(height - (imgH - FEATHER), FEATHER + 1);
+    const f = FEATHER / sheetH;
+    return [0, f * 0.3, f * 0.55, f * 0.75, f * 0.9, f, 1] as [number, number, ...number[]];
+  }, [height, imgH]);
+
   const imgSource = a.imageUrl ? { uri: a.imageUrl } : artFor(a.topic);
   // ambient glass: the article's own image, heavily blurred, becomes the
   // card's backdrop so its palette bleeds through the whole surface
   const tint = isDark ? 'rgba(8,11,20,0.74)' : 'rgba(255,255,255,0.45)';
   // sharp image dissolves via a TRUE alpha mask — no bands, no seams
-  const fadeH = imgH + 120;
+  const fadeH = imgH + 110;
 
   const sharpLayers = (
     <>
@@ -546,8 +588,8 @@ function ReaderCard({ a, height, topInset }: { a: Article; height: number; topIn
           style={{ position: 'absolute', top: 0, left: 0, right: 0, height: fadeH }}
           maskElement={
             <LinearGradient
-              colors={['#000', '#000', 'rgba(0,0,0,0.4)', 'rgba(0,0,0,0)']}
-              locations={[0, 0.55, 0.8, 1]}
+              colors={['#000', '#000', 'rgba(0,0,0,0.62)', 'rgba(0,0,0,0.22)', 'rgba(0,0,0,0)']}
+              locations={[0, 0.42, 0.66, 0.85, 1]}
               style={{ flex: 1 }}
             />
           }
@@ -577,22 +619,42 @@ function ReaderCard({ a, height, topInset }: { a: Article; height: number; topIn
       {/* frosted sheet that FEATHERS into the image — no hard edge.
           The ambient backdrop beneath is already an image-blur, so the sheet
           itself only needs a feathered tint (web adds real backdrop blur). */}
-      <View style={[s.sheet, { top: imgH - 40 }]}>
+      <View style={[s.sheet, { top: imgH - FEATHER }]}>
         {Platform.OS === 'web' ? (
           <BlurView intensity={26} tint={isDark ? 'dark' : 'light'} style={StyleSheet.absoluteFill} />
         ) : null}
+        {/* A single gradient spanning the whole sheet — nothing is painted on
+            top of it, so there is no edge anywhere. Stops are derived from
+            FEATHER so the melt is the same pixel length on every screen, and
+            eased (not linear) so it never bands. */}
         <LinearGradient
           colors={
             isDark
-              ? (['rgba(12,17,29,0)', 'rgba(12,17,29,0.42)', 'rgba(12,17,29,0.6)', 'rgba(12,17,29,0.68)'] as any)
-              : (['rgba(255,255,255,0)', 'rgba(255,255,255,0.3)', 'rgba(255,255,255,0.5)', 'rgba(255,255,255,0.66)'] as any)
+              ? ([
+                  'rgba(12,17,29,0)',
+                  'rgba(12,17,29,0.10)',
+                  'rgba(12,17,29,0.30)',
+                  'rgba(12,17,29,0.58)',
+                  'rgba(12,17,29,0.80)',
+                  SHEET_DARK,
+                  SHEET_DARK,
+                ] as any)
+              : ([
+                  'rgba(255,255,255,0)',
+                  'rgba(255,255,255,0.10)',
+                  'rgba(255,255,255,0.30)',
+                  'rgba(255,255,255,0.58)',
+                  'rgba(255,255,255,0.80)',
+                  SHEET_LIGHT,
+                  SHEET_LIGHT,
+                ] as any)
           }
-          locations={[0, 0.14, 0.3, 0.52]}
+          locations={sheetStops}
           style={StyleSheet.absoluteFill}
         />
 
-        <View style={{ flex: 1, paddingHorizontal: 24, paddingTop: 34 }}>
-        <Headline numberOfLines={3} style={{ fontSize: 25, lineHeight: 31 }}>
+        <View style={{ flex: 1, paddingHorizontal: 24, paddingTop: FEATHER + 22 }}>
+        <Headline numberOfLines={4} style={{ fontSize: 23.5, lineHeight: 29.5 }}>
           {a.title}
         </Headline>
 
@@ -632,7 +694,9 @@ function ReaderCard({ a, height, topInset }: { a: Article; height: number; topIn
                 }}
                 style={[s.actionCircle, { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(11,13,18,0.045)' }]}
               >
-                <LIcon name="heart" size={18} color={liked ? c.breaking : c.ink} fill={liked ? c.breaking : 'none'} />
+                <Animated.View style={heartStyle}>
+                  <LIcon name="heart" size={18} color={liked ? c.breaking : c.ink} fill={liked ? c.breaking : 'none'} />
+                </Animated.View>
               </Press>
               {burst > 0 && liked ? <HeartBurst key={burst} /> : null}
             </View>
@@ -790,25 +854,43 @@ function SaveRing({ color }: { color: string }) {
   );
 }
 
+// One driver, no springs: particles fly out, shrink and fade in 520ms, then
+// the whole thing is gone. Bouncy per-dot ZoomIn read as jitter.
 function HeartBurst() {
+  const v = useSharedValue(0);
+  React.useEffect(() => {
+    v.value = withTiming(1, { duration: 520, easing: Easing.out(Easing.cubic) });
+  }, [v]);
+
+  const ring = useAnimatedStyle(() => ({
+    opacity: (1 - v.value) * 0.9,
+    transform: [{ scale: 0.4 + v.value * 1.5 }],
+  }));
+
   return (
     <View pointerEvents="none" style={s.burstWrap}>
+      <Animated.View style={[s.burstRing, ring]} />
       {[...Array(6)].map((_, i) => {
-        const angle = (i / 6) * Math.PI * 2;
-        return (
-          <View
-            key={i}
-            style={{
-              position: 'absolute',
-              transform: [{ translateX: Math.cos(angle) * 24 }, { translateY: Math.sin(angle) * 24 }],
-            }}
-          >
-            <Animated.View entering={ZoomIn.duration(340).springify().damping(9)} style={s.burstDot} />
-          </View>
-        );
+        const angle = (i / 6) * Math.PI * 2 - Math.PI / 2;
+        return <BurstDot key={i} angle={angle} v={v} />;
       })}
     </View>
   );
+}
+
+function BurstDot({ angle, v }: { angle: number; v: SharedValue<number> }) {
+  const a = useAnimatedStyle(() => {
+    const d = 8 + v.value * 22;
+    return {
+      opacity: 1 - v.value,
+      transform: [
+        { translateX: Math.cos(angle) * d },
+        { translateY: Math.sin(angle) * d },
+        { scale: interpolate(v.value, [0, 0.35, 1], [0.2, 1, 0.15], Extrapolation.CLAMP) },
+      ],
+    };
+  });
+  return <Animated.View style={[s.burstDot, { position: 'absolute' }, a]} />;
 }
 
 const s = StyleSheet.create({
@@ -876,9 +958,17 @@ const s = StyleSheet.create({
     justifyContent: 'center',
   },
   burstDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
+    width: 5,
+    height: 5,
+    borderRadius: 2.5,
     backgroundColor: colors.breaking,
+  },
+  burstRing: {
+    position: 'absolute',
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    borderWidth: 1.5,
+    borderColor: colors.breaking,
   },
 });

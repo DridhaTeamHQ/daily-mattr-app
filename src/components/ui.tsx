@@ -16,7 +16,7 @@ import { artFor } from '@/lib/topicArt';
 import * as Lucide from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import { tick } from '@/lib/haptics';
-import { colors, font, type, radius, spring, scrim } from '@/theme';
+import { colors, font, serif, type, radius, spring, scrim } from '@/theme';
 import { useTheme } from '@/lib/theme';
 
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
@@ -77,11 +77,21 @@ export const Caption = makeText(type.caption);
 export const Meta = makeText(type.meta);
 export const Overline = makeText(type.overline, { textTransform: 'uppercase' });
 
-export function Txt(props: TextProps & { size?: number; lh?: number; color?: string; weight?: keyof typeof font; ls?: number }) {
+export function Txt(
+  props: TextProps & {
+    size?: number;
+    lh?: number;
+    color?: string;
+    weight?: keyof typeof font;
+    ls?: number;
+    serif?: boolean;
+  },
+) {
   const { c } = useTheme();
-  const { size = 14, lh, color = c.ink, weight = 'regular', ls = 0, style, ...rest } = props;
+  const { size = 14, lh, color = c.ink, weight = 'regular', ls = 0, serif: useSerif, style, ...rest } = props;
+  const family = useSerif ? serif[weight === 'medium' ? 'regular' : weight] ?? serif.bold : font[weight];
   return (
-    <Text {...rest} style={[{ fontFamily: font[weight], fontSize: size, lineHeight: lh ?? size * 1.45, letterSpacing: ls, color, userSelect: 'none' as const }, style]} />
+    <Text {...rest} style={[{ fontFamily: family, fontSize: size, lineHeight: lh ?? size * 1.45, letterSpacing: ls, color, userSelect: 'none' as const }, style]} />
   );
 }
 
