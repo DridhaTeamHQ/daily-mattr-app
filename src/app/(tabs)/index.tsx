@@ -170,7 +170,7 @@ export default function Home() {
           <Txt size={11} weight="semibold" color={c.inkSoft} ls={1.5} style={{ textTransform: 'uppercase' }}>
             {greeting()} · {dateLabel}
           </Txt>
-          <Txt serif size={29} lh={35} weight="bold" ls={-0.5} style={{ marginTop: 6 }}>
+          <Txt display size={28} lh={33} weight="extrabold" ls={-1.0} style={{ marginTop: 6 }}>
             What&apos;s new today?
           </Txt>
         </Animated.View>

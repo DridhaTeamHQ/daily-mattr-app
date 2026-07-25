@@ -17,11 +17,12 @@ import {
   Inter_800ExtraBold,
 } from '@expo-google-fonts/inter';
 import {
-  Newsreader_400Regular,
-  Newsreader_600SemiBold,
-  Newsreader_700Bold,
-  Newsreader_800ExtraBold,
-} from '@expo-google-fonts/newsreader';
+  PlusJakartaSans_400Regular,
+  PlusJakartaSans_500Medium,
+  PlusJakartaSans_600SemiBold,
+  PlusJakartaSans_700Bold,
+  PlusJakartaSans_800ExtraBold,
+} from '@expo-google-fonts/plus-jakarta-sans';
 import { StoreProvider } from '@/lib/store';
 import { ThemeProvider, useTheme } from '@/lib/theme';
 import { NavVisibilityProvider } from '@/lib/navVisibility';
@@ -47,10 +48,11 @@ export default function RootLayout() {
     Inter_600SemiBold,
     Inter_700Bold,
     Inter_800ExtraBold,
-    Newsreader_400Regular,
-    Newsreader_600SemiBold,
-    Newsreader_700Bold,
-    Newsreader_800ExtraBold,
+    PlusJakartaSans_400Regular,
+    PlusJakartaSans_500Medium,
+    PlusJakartaSans_600SemiBold,
+    PlusJakartaSans_700Bold,
+    PlusJakartaSans_800ExtraBold,
   });
 
   useEffect(() => {

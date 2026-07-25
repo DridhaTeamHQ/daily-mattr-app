@@ -732,7 +732,7 @@ function ReaderCard({ a, height, topInset }: { a: Article; height: number; topIn
         />
 
         <View style={{ flex: 1, paddingHorizontal: 24, paddingTop: FEATHER + 22 }}>
-        <Headline numberOfLines={4} style={{ fontSize: 23.5, lineHeight: 29.5 }}>
+        <Headline numberOfLines={4} style={{ fontSize: 24, lineHeight: 29, letterSpacing: -0.7 }}>
           {a.title}
         </Headline>
 
@@ -821,17 +821,15 @@ function ReaderCard({ a, height, topInset }: { a: Article; height: number; topIn
 
 /* Reading type. Measure here is ~41 characters — mobile can't reach the 66ish
    print ideal, and on lines that short generous leading reads as disconnected
-   rather than airy, so the ratio is ~1.55 instead of the 1.7 it was. Newsreader
-   carries the body as well as the headline: it was drawn for continuous
-   on-screen reading, so the card speaks in one editorial voice. */
+   rather than airy, so the ratio is ~1.55 instead of the 1.7 it was. Body stays
+   on the UI face: at this size Inter is the most legible thing we have. */
 function SummaryBody({ a }: { a: Article }) {
   const { c, isDark } = useTheme();
   return (
     <View style={{ flex: 1 }}>
       <Txt
-        serif
-        size={17.5}
-        lh={27}
+        size={17}
+        lh={26.5}
         color={isDark ? '#DCE4F0' : '#1E242F'}
         numberOfLines={11}
       >

@@ -84,21 +84,22 @@ export const font = {
   extrabold: 'Inter_800ExtraBold',
 } as const;
 
-// Display voice. Newsreader was commissioned by Google Fonts for on-screen
-// long-form news and is drawn to pair with a neutral UI sans — headlines get
-// editorial authority, Inter keeps carrying every UI surface.
-export const serif = {
-  regular: 'Newsreader_400Regular',
-  semibold: 'Newsreader_600SemiBold',
-  bold: 'Newsreader_700Bold',
-  extrabold: 'Newsreader_800ExtraBold',
+// Display voice — a normal sans, just a better-drawn one than the UI face.
+// Plus Jakarta Sans has tighter apertures and more character at large sizes,
+// so headlines read as set rather than defaulted; Inter carries everything else.
+export const display = {
+  regular: 'PlusJakartaSans_400Regular',
+  medium: 'PlusJakartaSans_500Medium',
+  semibold: 'PlusJakartaSans_600SemiBold',
+  bold: 'PlusJakartaSans_700Bold',
+  extrabold: 'PlusJakartaSans_800ExtraBold',
 } as const;
 
 // Extreme hierarchy — type dominates the interface.
 export const type = {
-  hero: { size: 40, lh: 46, ls: -1.0, f: serif.extrabold },
-  storyTitle: { size: 32, lh: 38, ls: -0.6, f: serif.bold },
-  headline: { size: 28, lh: 35, ls: -0.4, f: serif.bold },
+  hero: { size: 40, lh: 45, ls: -1.3, f: display.extrabold },
+  storyTitle: { size: 32, lh: 37, ls: -1.0, f: display.extrabold },
+  headline: { size: 28, lh: 34, ls: -0.8, f: display.bold },
   section: { size: 23, lh: 28, ls: -0.6, f: font.bold },
   cardTitle: { size: 17.5, lh: 23, ls: -0.4, f: font.bold },
   subtitle: { size: 16, lh: 22, ls: -0.2, f: font.medium },

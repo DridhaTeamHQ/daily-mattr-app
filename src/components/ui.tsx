@@ -16,7 +16,7 @@ import { artFor } from '@/lib/topicArt';
 import * as Lucide from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import { tick } from '@/lib/haptics';
-import { colors, font, serif, type, radius, spring, scrim } from '@/theme';
+import { colors, font, display, type, radius, spring, scrim } from '@/theme';
 import { useTheme } from '@/lib/theme';
 
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
@@ -84,12 +84,12 @@ export function Txt(
     color?: string;
     weight?: keyof typeof font;
     ls?: number;
-    serif?: boolean;
+    display?: boolean;
   },
 ) {
   const { c } = useTheme();
-  const { size = 14, lh, color = c.ink, weight = 'regular', ls = 0, serif: useSerif, style, ...rest } = props;
-  const family = useSerif ? serif[weight === 'medium' ? 'regular' : weight] ?? serif.bold : font[weight];
+  const { size = 14, lh, color = c.ink, weight = 'regular', ls = 0, display: useDisplay, style, ...rest } = props;
+  const family = useDisplay ? display[weight] ?? display.bold : font[weight];
   return (
     <Text {...rest} style={[{ fontFamily: family, fontSize: size, lineHeight: lh ?? size * 1.45, letterSpacing: ls, color, userSelect: 'none' as const }, style]} />
   );
