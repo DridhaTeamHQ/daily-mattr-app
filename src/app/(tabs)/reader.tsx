@@ -126,7 +126,9 @@ export default function Reader() {
         spin.value = spinFrom.value - e.translationY / DRAG_PX;
       })
       .onEnd(() => {
-        runOnJS(commitSpin)(Math.round(spin.value));
+        const landed = Math.round(spin.value);
+        spin.value = withSpring(landed, spring.snappy); // settle onto the detent
+        runOnJS(commitSpin)(landed);
       });
     const tap = Gesture.Tap().onEnd((_e, ok) => {
       if (ok) runOnJS(openDrawer)(true);
@@ -358,11 +360,14 @@ const WHEEL_ITEMS: (string | null)[] = [null, ...READER_TOPICS]; // null = For Y
    and the rest curve back toward the edge above and below it. Driven by one
    shared value the press-drag gesture writes to. */
 
-const ARC_STEP = 0.55; // radians between neighbours — wide enough that bubbles never touch
-const ARC_R = W * 0.58; // radius of the half circle
+const ARC_STEP = 0.42; // radians between neighbours
+// An ellipse, not a circle: the vertical radius reaches the top and bottom
+// edges of the screen while the horizontal one keeps the focused bubble
+// roughly centred instead of shoving it off the left side.
+const ARC_RX = W * 0.58;
 const ARC_CX = W + 26; // centre sits just off the right edge, so only half shows
 const ARC_EDGE = 1.62; // past this angle a bubble has left the visible arc
-const BUBBLE = 84;
+const BUBBLE = 86;
 export const DRAG_PX = 74; // finger travel per topic
 
 // Shortest way round the ring, so topics always fill the arc above AND below
@@ -388,6 +393,7 @@ function TopicWheel({
 }) {
   const { height: winH } = useWindowDimensions();
   const cy = winH / 2;
+  const ry = winH * 0.54; // arc runs off the top and bottom edges
 
   // a detent every time a new topic takes the focus point
   useAnimatedReaction(
@@ -400,7 +406,7 @@ function TopicWheel({
   return (
     <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
       {WHEEL_ITEMS.map((t, i) => (
-        <ArcBubble key={t ?? 'foryou'} index={i} spin={spin} cy={cy}>
+        <ArcBubble key={t ?? 'foryou'} index={i} spin={spin} cy={cy} ry={ry}>
           {t === null ? (
             <Press
               haptic={false}
@@ -441,27 +447,29 @@ function ArcBubble({
   index,
   spin,
   cy,
+  ry,
   children,
 }: {
   index: number;
   spin: SharedValue<number>;
   cy: number;
+  ry: number;
   children: React.ReactNode;
 }) {
   const place = useAnimatedStyle(() => {
     const theta = arcAngle(index, spin.value);
     const ad = Math.abs(theta);
     return {
-      opacity: interpolate(ad, [0, 0.55, 1.15, ARC_EDGE], [1, 0.6, 0.22, 0], Extrapolation.CLAMP),
+      opacity: interpolate(ad, [0, 0.42, 1.15, ARC_EDGE], [1, 0.66, 0.26, 0], Extrapolation.CLAMP),
       transform: [
-        { translateX: ARC_CX - ARC_R * Math.cos(theta) - BUBBLE / 2 },
-        { translateY: cy + ARC_R * Math.sin(theta) - BUBBLE / 2 },
+        { translateX: ARC_CX - ARC_RX * Math.cos(theta) - BUBBLE / 2 },
+        { translateY: cy + ry * Math.sin(theta) - BUBBLE / 2 },
       ],
     };
   });
   const size = useAnimatedStyle(() => {
     const ad = Math.abs(arcAngle(index, spin.value));
-    return { transform: [{ scale: interpolate(ad, [0, 0.4, 1.0, ARC_EDGE], [1.3, 0.94, 0.66, 0.5], Extrapolation.CLAMP) }] };
+    return { transform: [{ scale: interpolate(ad, [0, 0.42, 1.0, ARC_EDGE], [1.58, 0.98, 0.66, 0.48], Extrapolation.CLAMP) }] };
   });
   return (
     <Animated.View
@@ -575,10 +583,15 @@ function ReaderCard({ a, height, topInset }: { a: Article; height: number; topIn
   const imgH = Math.max(height * 0.36, 240);
 
   // ramp occupies exactly FEATHER px of a sheet that runs to the bottom
-  const sheetStops = useMemo(() => {
+  const { sheetStops, washStops } = useMemo(() => {
     const sheetH = Math.max(height - (imgH - FEATHER), FEATHER + 1);
     const f = FEATHER / sheetH;
-    return [0, f * 0.3, f * 0.55, f * 0.75, f * 0.9, f, 1] as [number, number, ...number[]];
+    return {
+      sheetStops: [0, f * 0.3, f * 0.55, f * 0.75, f * 0.9, f, 1] as [number, number, ...number[]],
+      // stays fully clear across the photo and only picks up colour once the
+      // glass has taken over — otherwise its top edge cuts a band across the image
+      washStops: [0, f * 0.85, Math.min(f + 0.16, 0.94), 1] as [number, number, ...number[]],
+    };
   }, [height, imgH]);
 
   const imgSource = a.imageUrl ? { uri: a.imageUrl } : artFor(a.topic);
@@ -697,8 +710,8 @@ function ReaderCard({ a, height, topInset }: { a: Article; height: number; topIn
             stopping dead at pure white */}
         <LinearGradient
           pointerEvents="none"
-          colors={[t.wash, t.wash, 'rgba(0,0,0,0)'] as any}
-          locations={[0, 0.18, 0.72]}
+          colors={['rgba(0,0,0,0)', 'rgba(0,0,0,0)', t.wash, 'rgba(0,0,0,0)'] as any}
+          locations={washStops}
           style={StyleSheet.absoluteFill}
         />
 
