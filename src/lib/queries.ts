@@ -1,5 +1,6 @@
 import { supabase } from './supabase';
-import { ARTICLE_COLS, mapArticle, type Article } from './content';
+import { ARTICLE_COLS, mapArticle, mapModes, type Article } from './content';
+import { isPixEligible } from './feed';
 import { getDeviceId } from './telemetry';
 
 const PUBLISHED = ['approved', 'sent'];
@@ -76,20 +77,77 @@ export async function fetchReaderFeed(limit = 40, topics?: string[]): Promise<Ar
 /* Pix needs a photo AND the three key points, which the personalized feed
    RPC does not carry. ~39% of the corpus qualifies, so a plain recency query
    over the versions payload is enough — no new RPC. */
-export async function fetchPix(limit = 24, topics?: string[]): Promise<Article[]> {
+export async function fetchPix(
+  limit = 24,
+  topics?: string[],
+  before?: string | null,
+): Promise<Article[]> {
+  /* `versions->tldr is not null` used to be a server-side filter here, and it
+     starved this deck: the summariser has reached a small fraction of the
+     table, so the Pix category was drawing from roughly one story in fourteen
+     while the rest of the app had thousands. The gate is now lib/feed's
+     isPixEligible, which falls back to the summary — the same rule the mixed
+     feed uses, so a story is a picture story in both places or neither.
+
+     A photo is still required in SQL: that one is cheap, indexed, and no
+     fallback can invent an image. */
   let q = supabase
     .from('articles')
     .select(ARTICLE_COLS + ',versions')
     .in('status', PUBLISHED)
-    .not('image_url', 'is', null)
-    .not('versions->tldr', 'is', null);
+    .not('image_url', 'is', null);
   if (topics?.length) q = q.in('topic', expandTopics(topics));
-  const { data, error } = await ordered(q).limit(limit * 2);
+  // Keyset, same shape as fetchFeedPage: `before` is the publishedAt of the
+  // last card already on screen, and publishedAt is reviewed_at ?? scraped_at,
+  // which is exactly what ordered() sorts on. Offset paging would drift as new
+  // articles land at the top; this cannot.
+  if (before) {
+    q = q.or(`reviewed_at.lt.${before},and(reviewed_at.is.null,scraped_at.lt.${before})`);
+  }
+  // 1.4x rather than 2x: nearly everything with a photo now qualifies, so the
+  // old overfetch was mostly wasted rows over the wire
+  const { data, error } = await ordered(q).limit(Math.ceil(limit * 1.4));
   if (error) throw error;
-  return (data ?? [])
-    .map(mapArticle)
-    .filter((a: Article) => (a.modes?.tldr?.length ?? 0) >= 3 && !!a.imageUrl)
-    .slice(0, limit);
+  return (data ?? []).map(mapArticle).filter(isPixEligible).slice(0, limit);
+}
+
+/* The quiz needs `versions` — fetchByIds selects ARTICLE_COLS only, and
+   without tldr/key_numbers the generator can't tell which entities are
+   central to a story and falls back to any capitalised word. */
+export async function fetchArticlesWithModes(ids: string[]): Promise<Article[]> {
+  if (!ids.length) return [];
+  const { data, error } = await supabase
+    .from('articles')
+    .select(ARTICLE_COLS + ',versions')
+    .in('id', ids);
+  if (error) throw error;
+  const byId = new Map((data ?? []).map((r: any) => [r.id, mapArticle(r)]));
+  return ids.map((id) => byId.get(id)).filter(Boolean) as Article[];
+}
+
+/* Just the reading-mode payloads for a set of ids.
+
+   The personalized feed RPC (app_get_feed) does not return `versions`, so a
+   story that arrives through For You has no tldr and can never pass the Pix
+   gate — which silently meant no picture stories on the main feed at all.
+   Rather than refetch whole rows, this pulls the one missing column and the
+   caller merges it in. Small payload, one round trip. */
+export async function fetchModesFor(ids: string[]): Promise<Record<string, Article['modes']>> {
+  if (!ids.length) return {};
+  const { data, error } = await supabase.from('articles').select('id,versions').in('id', ids);
+  if (error) throw error;
+  const out: Record<string, Article['modes']> = {};
+  for (const r of data ?? []) out[(r as any).id] = mapModes((r as any).versions);
+  return out;
+}
+
+/** Recent articles used only as a distractor corpus. */
+export async function fetchQuizPool(limit = 150): Promise<Article[]> {
+  const { data, error } = await ordered(
+    supabase.from('articles').select(ARTICLE_COLS + ',versions').in('status', PUBLISHED),
+  ).limit(limit);
+  if (error) throw error;
+  return (data ?? []).map(mapArticle);
 }
 
 function ordered(q: any) {
