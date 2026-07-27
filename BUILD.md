@@ -20,6 +20,17 @@ phone. This is a real dev-client build, so **remote push notifications work**
 Supabase cron (`app_breaking_push`, every 10 min) delivers breaking-news pushes
 via Expo's push service.
 
+Before your first cloud build, register the Supabase env vars with EAS. `.env`
+is git-ignored, so EAS never uploads it and the build would otherwise fail at
+startup with "Missing EXPO_PUBLIC_SUPABASE_URL":
+
+```bash
+eas env:create --name EXPO_PUBLIC_SUPABASE_URL --value https://ygxdrphajvrbjcaxhvcn.supabase.co --visibility plaintext --environment preview --environment production
+```
+
+Repeat for `EXPO_PUBLIC_SUPABASE_ANON_KEY` (value from your local `.env`). Do
+**not** paste keys into `eas.json` — that file is committed.
+
 Notes
 - `eas init` inserts `extra.eas.projectId` into app.json — commit that change.
 - The app icon/splash still use placeholder art. Replace

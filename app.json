@@ -40,7 +40,8 @@
         {
           "color": "#3979FF"
         }
-      ]
+      ],
+      "expo-web-browser"
     ],
     "experiments": {
       "typedRoutes": true,
