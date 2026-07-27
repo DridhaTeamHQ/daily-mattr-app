@@ -1,8 +1,15 @@
-/* Pix presets.
-   One card component, many looks. Variety lives here as data so the feed reads
-   like a magazine rather than a template, while the layout logic stays in one
-   place. A style is picked by hashing the article id, so a given story always
-   looks the same but neighbouring stories rarely match. */
+/* The Pix design.
+
+   This started as fifteen presets hashed off the article id, on the theory
+   that a varied feed reads like a magazine. In practice it read as
+   inconsistent: the format had no recognisable shape, because the next
+   picture story looked nothing like the last one. Pix is now ONE design, and
+   the only thing that changes between cards is the story — the photograph,
+   the headline, and which words inside it come up in blue.
+
+   The shape is kept as a descriptor rather than inlined into the card so the
+   layout branches stay readable and a variant remains cheap to reintroduce if
+   it is ever wanted deliberately, rather than by hash. */
 
 export type PixStyle = {
   id: string;
@@ -16,39 +23,28 @@ export type PixStyle = {
   size: 'xl' | 'lg' | 'md'; // headline scale
 };
 
-export const PIX_STYLES: PixStyle[] = [
-  // full-bleed, cinematic — closest to the reference
-  { id: 'bleed-ink', frame: 'bleed', anchor: 'bottom', scrim: 'ink', accent: 'fill', back: 'dim', marker: 'dot', align: 'left', size: 'lg' },
-  { id: 'bleed-topic', frame: 'bleed', anchor: 'bottom', scrim: 'topic', accent: 'fill', back: 'dim', marker: 'dot', align: 'left', size: 'lg' },
-  { id: 'bleed-quiet', frame: 'bleed', anchor: 'bottom', scrim: 'ink', accent: 'underline', back: 'dim', marker: 'rule', align: 'left', size: 'md' },
-  { id: 'bleed-loud', frame: 'bleed', anchor: 'bottom', scrim: 'ink', accent: 'fill', back: 'dim', marker: 'numeral', align: 'left', size: 'xl' },
-  { id: 'bleed-duo', frame: 'bleed', anchor: 'bottom', scrim: 'duotone', accent: 'bar', back: 'dim', marker: 'dot', align: 'left', size: 'lg' },
+/* Photograph across the top, the story on a dark panel beneath it, the
+   newsworthy words picked out in blue with a short rule under the block, and
+   the key points over the dimmed photo on the second slide. */
+export const PIX_STYLE: PixStyle = {
+  id: 'pix',
+  frame: 'inset',
+  anchor: 'bottom',
+  scrim: 'ink',
+  // colour, not a filled block: a highlighter behind three words in a
+  // three-line headline fights the photograph above it
+  accent: 'bar',
+  back: 'dim',
+  marker: 'dot',
+  align: 'left',
+  size: 'lg',
+};
 
-  // headline over the top of the frame instead of under it
-  { id: 'top-ink', frame: 'bleed', anchor: 'top', scrim: 'ink', accent: 'fill', back: 'dim', marker: 'dot', align: 'left', size: 'lg' },
-  { id: 'top-duo', frame: 'bleed', anchor: 'top', scrim: 'duotone', accent: 'underline', back: 'band', marker: 'numeral', align: 'left', size: 'md' },
+export const PIX_STYLES: PixStyle[] = [PIX_STYLE];
 
-  // centred, poster-like
-  { id: 'poster', frame: 'bleed', anchor: 'centre', scrim: 'ink', accent: 'fill', back: 'dim', marker: 'dot', align: 'centre', size: 'xl' },
-  { id: 'poster-topic', frame: 'bleed', anchor: 'centre', scrim: 'topic', accent: 'none', back: 'canvas', marker: 'rule', align: 'centre', size: 'lg' },
-
-  // photo as an inset, type carries the card
-  { id: 'inset-editorial', frame: 'inset', anchor: 'bottom', scrim: 'ink', accent: 'underline', back: 'canvas', marker: 'numeral', align: 'left', size: 'lg' },
-  { id: 'inset-quiet', frame: 'inset', anchor: 'bottom', scrim: 'ink', accent: 'bar', back: 'canvas', marker: 'rule', align: 'left', size: 'md' },
-  { id: 'inset-duo', frame: 'inset', anchor: 'bottom', scrim: 'duotone', accent: 'fill', back: 'band', marker: 'dot', align: 'left', size: 'lg' },
-
-  // photo reduced to a cinematic band, key points get the room
-  { id: 'band-type', frame: 'band', anchor: 'bottom', scrim: 'ink', accent: 'underline', back: 'canvas', marker: 'numeral', align: 'left', size: 'xl' },
-  { id: 'band-topic', frame: 'band', anchor: 'bottom', scrim: 'topic', accent: 'bar', back: 'canvas', marker: 'rule', align: 'left', size: 'lg' },
-  { id: 'band-centre', frame: 'band', anchor: 'bottom', scrim: 'ink', accent: 'fill', back: 'band', marker: 'dot', align: 'centre', size: 'lg' },
-];
-
-/* Same idiom as nameFor() in comments.ts — unsigned shift, because a signed one
-   turns hashes past 2^31 negative and indexes off the front of the array. */
-export function pixStyleFor(id: string): PixStyle {
-  let h = 0;
-  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
-  return PIX_STYLES[h % PIX_STYLES.length];
+/** Every story gets the same design; the id is kept so callers need no change. */
+export function pixStyleFor(_id: string): PixStyle {
+  return PIX_STYLE;
 }
 
 export const HEADLINE_SIZE: Record<PixStyle['size'], { size: number; lh: number }> = {
