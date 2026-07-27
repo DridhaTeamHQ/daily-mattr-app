@@ -1,48 +1,59 @@
-import React, { useCallback, useMemo, useRef, useState } from 'react';
-import { View, StyleSheet, Dimensions, Share, LayoutChangeEvent, useWindowDimensions, Platform, Pressable } from 'react-native';
-import MaskedView from '@react-native-masked-view/masked-view';
-import { BlurView } from 'expo-blur';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { View, StyleSheet, Dimensions, useWindowDimensions, AppState } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useQuery } from '@tanstack/react-query';
-import { Image } from 'expo-image';
-import { LinearGradient } from 'expo-linear-gradient';
-import { tick, soft, save as saveHaptic, commit as commitHaptic } from '@/lib/haptics';
-import * as WebBrowser from 'expo-web-browser';
+import { tick, soft, commit as commitHaptic } from '@/lib/haptics';
 import Animated, {
-  FadeInDown,
   useSharedValue,
   useAnimatedScrollHandler,
   useAnimatedStyle,
   interpolate,
   withSpring,
-  Extrapolation,
-  useAnimatedReaction,
   runOnJS,
   withTiming,
-  withSequence,
-  LinearTransition,
   Easing,
-  type SharedValue,
 } from 'react-native-reanimated';
-import { colors, radius, spring, topicOf } from '@/theme';
-import { Txt, Headline, Press, Shimmer, BreakingBadge, EasedScrim, LIcon, TopicBubble } from '@/components/ui';
+import { spring } from '@/theme';
+import { Txt, Press, Shimmer, LIcon, TopicBubble } from '@/components/ui';
 import { fetchReaderFeed, fetchPix } from '@/lib/queries';
 import { fetchCommentCounts } from '@/lib/comments';
-import { CommentsPanel } from '@/components/commentsPanel';
-import { type Article, timeAgo, isBreaking } from '@/lib/content';
-import { useStore } from '@/lib/store';
+import { PixCard } from '@/components/pixCard';
+import { ReelCard } from '@/components/reelCard';
+import { PixPage } from '@/components/pixPage';
+import { PageShell } from '@/components/pageShell';
+import { ReaderCardMemo } from '@/components/readerCard';
+import { TopicWheel, FormatBubble, PIX_FILTER, WHEEL_ITEMS, DRAG_PX } from '@/components/topicDial';
+import { composeFeed, type FeedKind } from '@/lib/feed';
+import { NAVBAR_CLEARANCE } from '@/components/navbar';
+import { type Article } from '@/lib/content';
+import { storeActions } from '@/lib/store';
 import { useTheme } from '@/lib/theme';
 import { useNavVisibility } from '@/lib/navVisibility';
 import { track, createDwellTimer, flush as flushTelemetry } from '@/lib/telemetry';
-import { artFor, topicArt } from '@/lib/topicArt';
+import { bandOf } from '@/lib/timeBands';
+import { noteRead } from '@/lib/progress';
+import { useIsOnline } from '@/lib/network';
+
+/* The Articles deck.
+
+   This file used to be 1600 lines: the deck, the topic dial, the reader card,
+   the Pix page and the page shell all in one scroll. Those four now live in
+   components/ — topicDial, readerCard, pixPage, pageShell — and nothing here
+   changed in the move. What is left is the screen: the query, the pagination
+   cursor, the recency banding, and which of the three card kinds each row
+   gets. */
 
 const { width: W } = Dimensions.get('window');
 
-const READER_TOPICS = Object.keys(topicArt);
-
-// eases the headline up when comments take the card over
-const CONTENT_SHIFT = LinearTransition.springify().damping(30).stiffness(240).mass(0.85);
+// Module-level constants so their identity never changes between renders —
+// FlatList treats a new viewabilityConfig or renderItem as a reason to redo
+// work, and these are the two easiest ones to leak a fresh object into.
+const EMPTY_COUNTS: Record<string, number> = {};
+const VIEWABILITY = { itemVisiblePercentThreshold: 75 };
+const keyExtractor = (a: Article) => a.id;
+/** foreground dwell before a card counts toward the streak */
+const QUALIFY_MS = 3000;
 
 export default function Reader() {
   const { c, isDark } = useTheme();
@@ -134,12 +145,25 @@ export default function Reader() {
 
   const closeDial = useCallback(() => openDrawer(false), []);
 
+  // Mount the dial while it's open, and keep it alive through the close fade
+  // and the 580ms bloom so neither animation is cut off mid-flight.
+  const [dialMounted, setDialMounted] = useState(false);
+  useEffect(() => {
+    if (drawerOpen || revealTopic !== undefined) {
+      setDialMounted(true);
+      return;
+    }
+    const t = setTimeout(() => setDialMounted(false), 650);
+    return () => clearTimeout(t);
+  }, [drawerOpen, revealTopic]);
+
   const backdropFade = useAnimatedStyle(() => ({ opacity: 1 - reveal.value }));
   const wheelFade = useAnimatedStyle(() => ({ opacity: Math.max(0, 1 - reveal.value * 2.2) }));
   const bubbleBloom = useAnimatedStyle(() => ({
     opacity: interpolate(reveal.value, [0, 0.55, 1], [1, 0.8, 0]),
     transform: [{ scale: interpolate(reveal.value, [0, 1], [1, 9]) }],
   }));
+  const online = useIsOnline();
   const [measuredH, setMeasuredH] = useState(0);
   // Hidden tab screens can measure 0 on web; fall back to the window height.
   const pageH = measuredH > 100 ? measuredH : winH;
@@ -168,50 +192,191 @@ export default function Reader() {
     staleTime: 60_000,
   });
 
+  // the deck as it currently stands, for the pagination cursor — a ref so
+  // loadMore keeps one identity instead of being rebuilt on every append
+  const itemsRef = useRef<Article[]>([]);
+  itemsRef.current = feedItems;
+  const exhausted = useRef(false);
+
   const listRef = useRef<any>(null);
   React.useEffect(() => {
     setExtra([]);
+    exhausted.current = false;
     listRef.current?.scrollToOffset({ offset: 0, animated: false });
   }, [topicFilter]);
 
   const loadMore = useCallback(async () => {
-    if (loadingMore.current) return;
+    if (loadingMore.current || exhausted.current) return;
     loadingMore.current = true;
     try {
       await flushTelemetry(); // impressions raise seen_count so the next batch differs
+      const onScreen = itemsRef.current;
       const next =
         topicFilter === PIX_FILTER
-          ? await fetchPix(40)
+          ? // page from the oldest card on screen. Without a cursor this asked
+            // for the same top 40 every time, every row was deduped away, and
+            // the deck stopped dead at 40 cards.
+            await fetchPix(40, undefined, onScreen[onScreen.length - 1]?.publishedAt ?? null)
           : await fetchReaderFeed(40, topicFilter ? [topicFilter] : undefined);
-      setExtra((prev) => {
-        const have = new Set([...(data ?? []), ...prev].map((a) => a.id));
-        return [...prev, ...next.filter((a) => !have.has(a.id))];
-      });
+      const have = new Set(onScreen.map((a) => a.id));
+      const fresh = next.filter((a) => !have.has(a.id));
+      // a page that adds nothing means the end — stop asking, otherwise every
+      // scroll to the bottom fires another round trip for the same rows
+      if (!fresh.length) exhausted.current = true;
+      else setExtra((prev) => [...prev, ...fresh]);
     } catch {}
     loadingMore.current = false;
-  }, [data]);
+    // topicFilter belongs here: without it this closure kept the filter that
+    // was active when it was created, so hitting the end of a deck appended
+    // the *previous* category's articles to it. That is exactly the kind of
+    // cross-category bleed the Pix deck is meant to be free of.
+  }, [data, topicFilter]);
 
   const nav = useNavVisibility();
-  const onScroll = useAnimatedScrollHandler((e) => {
-    scrollY.value = e.contentOffset.y;
+  // Hiding the nav moved into the scroll handler itself: it used to be an
+  // onScrollBeginDrag JS callback, so every drag round-tripped to the JS
+  // thread mid-gesture. nav.hide() is a worklet and no-ops when the bar is
+  // already hidden, so this costs nothing per drag.
+  const onScroll = useAnimatedScrollHandler({
+    onScroll: (e) => {
+      scrollY.value = e.contentOffset.y;
+    },
+    onBeginDrag: () => {
+      // runOnJS: nav.hide is a plain JS function, not a worklet — see
+      // lib/navVisibility.tsx. It self-guards, so repeat drags cost nothing.
+      runOnJS(nav.hide)();
+    },
   });
 
+  // One pinned `now` for banding, refreshed on foreground — never Date.now()
+  // during render, which would let a card near a boundary change band between
+  // frames and move the marker around mid-swipe.
+  const [bandNow, setBandNow] = useState(() => Date.now());
+  useEffect(() => {
+    const tick = () => setBandNow(Date.now());
+    const sub = AppState.addEventListener('change', (s) => {
+      if (s === 'active') tick();
+    });
+    const iv = setInterval(tick, 5 * 60_000);
+    return () => {
+      sub.remove();
+      clearInterval(iv);
+    };
+  }, []);
+
+  /* index -> label, set only where the band changes. Index 0 is skipped: the
+     top of the deck is by definition the freshest, and a marker there reads as
+     a header rather than a transition.
+
+     Serialised into a string key so the 5-minute `bandNow` tick only produces
+     a new object when a card has ACTUALLY crossed a boundary. Previously every
+     tick minted a fresh object, which changed renderPage's identity, which made
+     FlatList re-render all three mounted full-screen cards for nothing. */
+  const bandKey = useMemo(() => {
+    const parts: string[] = [];
+    let prev: string | null = null;
+    feedItems.forEach((a, i) => {
+      const b = bandOf(a.publishedAt, bandNow);
+      if (prev !== null && b.id !== prev) parts.push(`${i}:${b.label}`);
+      prev = b.id;
+    });
+    return parts.join('|');
+  }, [feedItems, bandNow]);
+
+  const bandStarts = useMemo(() => {
+    const out: Record<number, string> = {};
+    if (!bandKey) return out;
+    for (const part of bandKey.split('|')) {
+      const at = part.indexOf(':');
+      out[Number(part.slice(0, at))] = part.slice(at + 1);
+    }
+    return out;
+  }, [bandKey]);
+
   const topInset = insets.top;
-  const counts = commentCounts.data ?? {};
+  // Stable identity. `commentCounts.data ?? {}` minted a fresh object on every
+  // render while the counts query was still in flight, which changed
+  // renderPage's identity, which made FlatList re-render every mounted card —
+  // full-screen cards with two images and a mask each. That was the stutter.
+  const counts = commentCounts.data ?? EMPTY_COUNTS;
+  // Pix is a format, not a topic, so its category is a different kind of deck:
+  // the boxed photo-story cards scrolling freely, exactly as designed, rather
+  // than the full-screen snapping reader every other topic uses.
+  const isPix = topicFilter === PIX_FILTER;
+
+  /* For You is the mixed deck: three articles, a picture story, three
+     articles, a motion card, repeating. A named topic stays a pure article
+     deck — you picked that topic to read it, not to be handed formats — and
+     the Pix category stays all-Pix. So the mix only applies to For You. */
+  const isMixed = topicFilter === null;
+  const mixedKinds = useMemo(() => {
+    if (!isMixed) return null;
+    const out: Record<string, FeedKind> = {};
+    for (const f of composeFeed(feedItems)) out[f.article.id] = f.kind;
+    return out;
+  }, [isMixed, feedItems]);
+
   const renderPage = useCallback(
-    ({ item, index }: { item: Article; index: number }) => (
-      <PageShell index={index} pageH={pageH} scrollY={scrollY}>
-        <ReaderCardMemo a={item} height={pageH} topInset={topInset} commentCount={counts[item.id] ?? 0} />
-      </PageShell>
-    ),
+    ({ item, index }: { item: Article; index: number }) => {
+      if (isPix) return <PixCard a={item} index={index} />;
+
+      /* A format card still occupies one full page so the snap interval and
+         getItemLayout stay exactly one screen tall — the deck's paging maths
+         depends on every row being pageH, and a shorter card would break the
+         snap for everything after it. */
+      const kind = mixedKinds?.[item.id] ?? 'row';
+      if (kind === 'motion') {
+        return (
+          <PageShell index={index} pageH={pageH} scrollY={scrollY}>
+            <ReelCard
+              a={item}
+              height={pageH}
+              topInset={topInset}
+              commentCount={counts[item.id] ?? 0}
+            />
+          </PageShell>
+        );
+      }
+      if (kind === 'pix') {
+        return (
+          <PageShell index={index} pageH={pageH} scrollY={scrollY}>
+            <PixPage
+              a={item}
+              height={pageH}
+              topInset={topInset}
+              commentCount={counts[item.id] ?? 0}
+            />
+          </PageShell>
+        );
+      }
+
+      return (
+        <PageShell index={index} pageH={pageH} scrollY={scrollY}>
+          <ReaderCardMemo
+            a={item}
+            height={pageH}
+            topInset={topInset}
+            commentCount={counts[item.id] ?? 0}
+            bandStart={bandStarts[index]}
+          />
+        </PageShell>
+      );
+    },
     // scrollY is a stable shared value ref
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [pageH, topInset, counts],
+    [isPix, isMixed, mixedKinds, pageH, topInset, counts, bandStarts],
   );
 
-  const { recordRead } = useStore();
-  const recordReadRef = useRef(recordRead);
-  recordReadRef.current = recordRead;
+  const getItemLayout = useCallback(
+    (_: any, i: number) => ({ length: pageH, offset: pageH * i, index: i }),
+    [pageH],
+  );
+
+  // storeActions() reads the live actions without subscribing, so the Reader
+  // screen no longer re-renders when history changes on every swipe.
+  const recordReadRef = useRef((id: string, topic: string) =>
+    storeActions().recordRead(id, topic),
+  );
 
   const dwellRef = useRef<{ id: string; topic: string; words: number; timer: ReturnType<typeof createDwellTimer> } | null>(null);
 
@@ -222,9 +387,20 @@ export default function Reader() {
       if (ms > 500) {
         track({ article_id: d.id, event_type: 'dwell', dwell_ms: ms, words: d.words, topic: d.topic });
       }
+      // The streak counts *qualified* reads only. onViewable fires at 75%
+      // visibility, so a fast fling marks three or four cards viewable inside
+      // a second — counting those would let anyone build a streak by flicking.
+      // The dwell clock is foreground-only, so backgrounding mid-card doesn't
+      // accrue either.
+      if (ms >= QUALIFY_MS) noteRead(d.id, d.topic, ms);
       dwellRef.current = null;
     }
   }, []);
+
+  // read inside the stable onViewable callback below, which FlatList captures
+  // once and will not accept a new identity for
+  const isPixRef = useRef(isPix);
+  isPixRef.current = isPix;
 
   const onViewable = useRef(({ viewableItems }: any) => {
     const first = viewableItems.find((v: any) => v.isViewable);
@@ -232,7 +408,9 @@ export default function Reader() {
     const a: Article = first.item;
     if (dwellRef.current?.id === a.id) return;
     closeDwell();
-    tick();
+    // the tick marks a page landing. The Pix deck scrolls freely — cards drift
+    // past rather than snapping — so a haptic per card would just be a rattle.
+    if (!isPixRef.current) tick();
     recordReadRef.current(a.id, a.topic); // the card the reader actually landed on
     dwellRef.current = { id: a.id, topic: a.topic, words: a.wordCount, timer: createDwellTimer() };
   }).current;
@@ -249,43 +427,84 @@ export default function Reader() {
   }
 
   if (error || (data && data.length === 0)) {
+    /* Three different situations, and they used to share one message.
+
+       "Couldn't load stories" followed by a raw fetch error reads as the app
+       being broken, when nine times out of ten the phone is simply on a train.
+       Now that onlineManager is wired to NetInfo (lib/network.ts) the app can
+       tell the difference and say which one it is. */
+    const offline = !!error && !online;
     return (
       <View style={{ flex: 1, backgroundColor: c.bg, alignItems: 'center', justifyContent: 'center', padding: 32 }}>
-        <LIcon name={error ? 'cloud-off' : 'layers'} size={34} color={c.inkFaint} />
+        <LIcon name={offline ? 'wifi-off' : error ? 'cloud-off' : 'layers'} size={34} color={c.inkFaint} />
         <Txt size={15} weight="bold" style={{ marginTop: 14 }}>
-          {error ? "Couldn't load stories" : 'All caught up'}
+          {offline ? "You're offline" : error ? "Couldn't load stories" : 'All caught up'}
         </Txt>
         <Txt size={13} weight="medium" color={c.inkSoft} style={{ marginTop: 6, textAlign: 'center' }}>
-          {error ? String((error as Error).message ?? error) : 'Check back soon for fresh stories.'}
+          {offline
+            ? 'Stories will load again as soon as you reconnect.'
+            : error
+              ? String((error as Error).message ?? error)
+              : 'Check back soon for fresh stories.'}
         </Txt>
-        <Press onPress={() => refetch()} style={{ marginTop: 18, backgroundColor: c.brand, borderRadius: 999, paddingHorizontal: 20, paddingVertical: 11 }}>
-          <Txt size={13.5} weight="semibold" color="#fff">
-            Try again
-          </Txt>
-        </Press>
+        {/* Retrying while offline just fails again. react-query refetches on
+            its own the moment the connection returns, so the honest thing here
+            is to say so rather than offer a button that cannot work. */}
+        {!offline ? (
+          <Press onPress={() => refetch()} style={{ marginTop: 18, backgroundColor: c.brand, borderRadius: 999, paddingHorizontal: 20, paddingVertical: 11 }}>
+            <Txt size={13.5} weight="semibold" color="#fff">
+              Try again
+            </Txt>
+          </Press>
+        ) : null}
       </View>
     );
   }
 
   return (
     <View style={{ flex: 1, backgroundColor: c.bg }} onLayout={(e) => setMeasuredH(e.nativeEvent.layout.height)}>
+      {/* Snapping: `pagingEnabled` is deliberately absent. RN documents
+          snapToInterval as overriding it, and setting both had the two native
+          snapping paths fighting each other on Android. snapToInterval is the
+          configurable one, and it's what disableIntervalMomentum (one card per
+          swipe, so dwell tracking stays honest) hangs off.
+
+          Windowing: each card is a full screen carrying two images — one
+          blurred as the ambient backdrop — plus a mask and four gradients, so
+          the window is kept tight. The old 5/3/3 kept up to five of those
+          alive at once and the render cost showed up as dropped frames on
+          every swipe. */}
       {pageH > 0 ? (
         <Animated.FlatList
           ref={listRef}
           data={feedItems}
-          keyExtractor={(a: Article) => a.id}
+          keyExtractor={keyExtractor}
           renderItem={renderPage}
           onScroll={onScroll}
-          onScrollBeginDrag={() => nav.hide()}
           scrollEventThrottle={16}
-          pagingEnabled
           showsVerticalScrollIndicator={false}
-          snapToInterval={pageH}
-          decelerationRate="fast"
-          disableIntervalMomentum
-          getItemLayout={(_: any, i: number) => ({ length: pageH, offset: pageH * i, index: i })}
+          {...(isPix
+            ? {
+                // free vertical scroll: Pix cards have their own height, so
+                // there is no page to snap to and getItemLayout's fixed-height
+                // assumption would be wrong
+                contentContainerStyle: {
+                  // clears the floating topics button and the "Pix" filter tag,
+                  // which sit at insets.top + 10 and + 58 and would otherwise
+                  // overlap the first card
+                  paddingTop: insets.top + 96,
+                  paddingBottom: NAVBAR_CLEARANCE + 20,
+                },
+              }
+            : {
+                snapToInterval: pageH,
+                snapToAlignment: 'start' as const,
+                decelerationRate: 'fast' as const,
+                disableIntervalMomentum: true,
+                getItemLayout,
+              })}
           onViewableItemsChanged={onViewable}
-          viewabilityConfig={{ itemVisiblePercentThreshold: 75 }}
+          viewabilityConfig={VIEWABILITY}
           onRefresh={() => {
             setExtra([]);
             refetch();
@@ -293,9 +512,13 @@ export default function Reader() {
           refreshing={false}
           onEndReached={loadMore}
           onEndReachedThreshold={2}
-          windowSize={5}
-          initialNumToRender={3}
-          maxToRenderPerBatch={3}
+          // a reader card is a whole screen, a Pix card about two-thirds of
+          // one — so the Pix deck needs a few more in hand to fill the
+          // viewport and keep a fling ahead of the renderer
+          windowSize={isPix ? 5 : 3}
+          initialNumToRender={isPix ? 3 : 2}
+          maxToRenderPerBatch={isPix ? 3 : 2}
+          updateCellsBatchingPeriod={60}
         />
       ) : null}
 
@@ -314,7 +537,14 @@ export default function Reader() {
         </View>
       ) : null}
 
-      {/* full-screen topic dial */}
+      {/* Full-screen topic dial — mounted only while it's in use.
+
+          It used to render unconditionally, with `drawerOpen` toggling nothing
+          but opacity and pointerEvents. That left 13 TopicBubbles (each a
+          decoded bundled image) and 30 animated nodes resident on the Articles
+          tab at all times, competing with the card deck for every frame. It
+          stays mounted through the close fade and the bloom, then unmounts. */}
+      {dialMounted ? (
       <Animated.View
         style={[StyleSheet.absoluteFill, dialStyle]}
         pointerEvents={drawerOpen ? 'auto' : 'none'}
@@ -347,198 +577,23 @@ export default function Reader() {
         {/* the chosen bubble blooms over the screen, then dissolves */}
         {revealTopic !== undefined ? (
           <Animated.View pointerEvents="none" style={[st.bloomWrap, bubbleBloom]}>
+            {/* the dial's own bubble, not a second copy of it — the bloom's
+                whole job is to look like the thing that was just tapped */}
             {revealTopic === null ? (
-              <View style={[st.forYouBubble, { backgroundColor: c.brand }]}>
-                <LIcon name="sparkles" size={22} color="#fff" strokeWidth={2.2} />
-                <Txt size={12.5} weight="bold" color="#fff" style={{ marginTop: 4 }}>
-                  For You
-                </Txt>
-              </View>
+              <FormatBubble kind="foryou" brand={c.brand} />
+            ) : revealTopic === PIX_FILTER ? (
+              <FormatBubble kind="pix" brand={c.brand} />
             ) : (
               <TopicBubble topic={revealTopic} size={92} />
             )}
           </Animated.View>
         ) : null}
       </Animated.View>
+      ) : null}
     </View>
   );
 }
 
-/* ---------- Full-screen topic dial ----------
-   Big artwork bubbles centered over a dimmed backdrop; drag to spin with
-   haptic detents — the centered bubble swells into the ring; tap to choose. */
-
-// The blend zone: how far the glass takes to melt from clear to readable.
-// Long on purpose — a short ramp reads as an edge.
-const FEATHER = 178;
-const SHEET_LIGHT = 'rgba(255,255,255,0.62)';
-const SHEET_DARK = 'rgba(12,17,29,0.58)';
-
-const WHEEL_ROW = 108;
-export const PIX_FILTER = '•Pix'; // sentinel, not a real topic
-const WHEEL_ITEMS: (string | null)[] = [null, PIX_FILTER, ...READER_TOPICS]; // null = For You
-
-/* The dial is a half-circle hinged off the right edge: every topic is placed
-   by its angle, so the focused one swings out toward the middle of the screen
-   and the rest curve back toward the edge above and below it. Driven by one
-   shared value the press-drag gesture writes to. */
-
-const ARC_STEP = 0.42; // radians between neighbours
-// An ellipse, not a circle: the vertical radius reaches the top and bottom
-// edges of the screen while the horizontal one keeps the focused bubble
-// roughly centred instead of shoving it off the left side.
-const ARC_RX = W * 0.58;
-const ARC_CX = W + 26; // centre sits just off the right edge, so only half shows
-const ARC_EDGE = 1.62; // past this angle a bubble has left the visible arc
-const BUBBLE = 86;
-export const DRAG_PX = 74; // finger travel per topic
-
-// Shortest way round the ring, so topics always fill the arc above AND below
-// the focus instead of fanning off in one direction from the first item.
-function arcAngle(index: number, spin: number): number {
-  'worklet';
-  const n = WHEEL_ITEMS.length;
-  let d = (((index - spin) % n) + n) % n;
-  if (d > n / 2) d -= n;
-  return d * ARC_STEP;
-}
-
-function TopicWheel({
-  selected,
-  onSelect,
-  onClose,
-  brand,
-  spin,
-}: {
-  selected: string | null;
-  onSelect: (t: string | null) => void;
-  onClose: () => void;
-  brand: string;
-  spin: SharedValue<number>;
-}) {
-  const { height: winH } = useWindowDimensions();
-  const cy = winH / 2;
-  const ry = winH * 0.54; // arc runs off the top and bottom edges
-
-  // Once the dial is open by tap it still has to be spinnable — this drags the
-  // wheel from any empty space, throws with the flick, and settles on a detent.
-  // Tapping that same empty space dismisses.
-  const dragFrom = useSharedValue(0);
-  const browse = useMemo(() => {
-    const drag = Gesture.Pan()
-      .minDistance(6)
-      .onStart(() => {
-        dragFrom.value = spin.value;
-      })
-      .onUpdate((e) => {
-        spin.value = dragFrom.value - e.translationY / DRAG_PX;
-      })
-      .onEnd((e) => {
-        const thrown = spin.value - (e.velocityY / DRAG_PX) * 0.09;
-        spin.value = withSpring(Math.round(thrown), spring.gentle);
-      });
-    const dismiss = Gesture.Tap().onEnd((_e, ok) => {
-      if (ok) runOnJS(onClose)();
-    });
-    return Gesture.Exclusive(drag, dismiss);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [onClose]);
-
-  // a detent every time a new topic takes the focus point
-  useAnimatedReaction(
-    () => Math.round(spin.value),
-    (cur, prev) => {
-      if (prev !== null && cur !== prev) runOnJS(tick)();
-    },
-  );
-
-  return (
-    <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
-      {/* drag surface sits behind the bubbles so their taps still land */}
-      <GestureDetector gesture={browse}>
-        <View style={StyleSheet.absoluteFill} />
-      </GestureDetector>
-      {WHEEL_ITEMS.map((t, i) => (
-        <ArcBubble key={t ?? 'foryou'} index={i} spin={spin} cy={cy} ry={ry}>
-          {t === null || t === PIX_FILTER ? (
-            <Press
-              haptic={false}
-              onPress={() => {
-                spin.value = i;
-                onSelect(t);
-              }}
-              scaleTo={0.94}
-              style={{ alignItems: 'center' }}
-            >
-              {/* Pix is a format, not a topic, so it gets its own bubble rather
-                  than a topic artwork and the sentinel showing through */}
-              <LinearGradient
-                colors={t === null ? [brand, brand] : ['#9B6CFF', '#5B2BD9']}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                style={st.forYouBubble}
-              >
-                <LIcon name={t === null ? 'sparkles' : 'images'} size={20} color="#fff" strokeWidth={2.2} />
-                <Txt size={12} weight="bold" color="#fff" style={{ marginTop: 3 }}>
-                  {t === null ? 'For You' : 'Pix'}
-                </Txt>
-              </LinearGradient>
-            </Press>
-          ) : (
-            <TopicBubble
-              topic={t}
-              size={BUBBLE}
-              selected={selected === t}
-              onPress={() => {
-                spin.value = i;
-                onSelect(t);
-              }}
-            />
-          )}
-        </ArcBubble>
-      ))}
-    </View>
-  );
-}
-
-// translate and scale live on separate views so the scale always pivots on the
-// bubble's own centre rather than its translated origin
-function ArcBubble({
-  index,
-  spin,
-  cy,
-  ry,
-  children,
-}: {
-  index: number;
-  spin: SharedValue<number>;
-  cy: number;
-  ry: number;
-  children: React.ReactNode;
-}) {
-  const place = useAnimatedStyle(() => {
-    const theta = arcAngle(index, spin.value);
-    const ad = Math.abs(theta);
-    return {
-      opacity: interpolate(ad, [0, 0.42, 1.15, ARC_EDGE], [1, 0.66, 0.26, 0], Extrapolation.CLAMP),
-      transform: [
-        { translateX: ARC_CX - ARC_RX * Math.cos(theta) - BUBBLE / 2 },
-        { translateY: cy + ry * Math.sin(theta) - BUBBLE / 2 },
-      ],
-    };
-  });
-  const size = useAnimatedStyle(() => {
-    const ad = Math.abs(arcAngle(index, spin.value));
-    return { transform: [{ scale: interpolate(ad, [0, 0.42, 1.0, ARC_EDGE], [1.58, 0.98, 0.66, 0.48], Extrapolation.CLAMP) }] };
-  });
-  return (
-    <Animated.View
-      style={[{ position: 'absolute', left: 0, top: 0, width: BUBBLE, height: BUBBLE, alignItems: 'center', justifyContent: 'center' }, place]}
-    >
-      <Animated.View style={size}>{children}</Animated.View>
-    </Animated.View>
-  );
-}
 
 const st = StyleSheet.create({
   bloomWrap: {
@@ -549,26 +604,6 @@ const st = StyleSheet.create({
     bottom: 0,
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  centerRing: {
-    position: 'absolute',
-    top: '50%',
-    left: '50%',
-    marginLeft: -62,
-    marginTop: -62,
-    width: 124,
-    height: 124,
-    borderRadius: 62,
-    borderWidth: 1.5,
-    borderColor: 'rgba(255,255,255,0.18)',
-  },
-  forYouBubble: {
-    width: 92,
-    height: 92,
-    borderRadius: 46,
-    alignItems: 'center',
-    justifyContent: 'center',
-    boxShadow: '0 10px 30px rgba(57,121,255,0.45)',
   },
   topicsBtn: {
     position: 'absolute',
@@ -587,528 +622,5 @@ const st = StyleSheet.create({
     borderRadius: 999,
     paddingHorizontal: 11,
     paddingVertical: 5,
-  },
-})
-
-/* Pages visibly hand off: leaving page scales to 0.94 and dims */
-function PageShell({ index, pageH, scrollY, children }: { index: number; pageH: number; scrollY: SharedValue<number>; children: React.ReactNode }) {
-  const a = useAnimatedStyle(() => {
-    const pos = [(index - 1) * pageH, index * pageH, (index + 1) * pageH];
-    return {
-      transform: [{ scale: interpolate(scrollY.value, pos, [0.94, 1, 0.94], Extrapolation.CLAMP) }],
-      opacity: interpolate(scrollY.value, pos, [0.55, 1, 0.55], Extrapolation.CLAMP),
-    };
-  });
-  return <Animated.View style={[{ height: pageH }, a]}>{children}</Animated.View>;
-}
-
-const ReaderCardMemo = React.memo(
-  ReaderCard,
-  (p, n) => p.a.id === n.a.id && p.height === n.height && p.topInset === n.topInset && p.commentCount === n.commentCount,
-);
-
-function ReaderCard({
-  a,
-  height,
-  topInset,
-  commentCount = 0,
-}: {
-  a: Article;
-  height: number;
-  topInset: number;
-  commentCount?: number;
-}) {
-  const { c, isDark } = useTheme();
-  const nav = useNavVisibility();
-
-  // Pull the card rightward to open the publisher's own page. activeOffsetX
-  // keeps it from stealing the vertical paging gesture, and failOffsetY bails
-  // the moment the drag is really a scroll.
-  const openSource = () => {
-    track({ article_id: a.id, event_type: 'open_full', topic: a.topic });
-    WebBrowser.openBrowserAsync(a.url);
-  };
-  const drag = useSharedValue(0);
-  const swipeToSource = useMemo(
-    () =>
-      Gesture.Pan()
-        .activeOffsetX(18)
-        .failOffsetY([-14, 14])
-        .onUpdate((e) => {
-          drag.value = Math.max(0, Math.min(e.translationX, 130));
-        })
-        .onEnd((e) => {
-          if (e.translationX > 96) runOnJS(openSource)();
-          drag.value = withSpring(0, spring.snappy);
-        }),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [a.id, a.url],
-  );
-  const dragStyle = useAnimatedStyle(() => ({ transform: [{ translateX: drag.value * 0.5 }] }));
-  const hintStyle = useAnimatedStyle(() => ({
-    opacity: interpolate(drag.value, [0, 40, 96], [0, 0.5, 1], Extrapolation.CLAMP),
-    transform: [{ scale: interpolate(drag.value, [0, 96], [0.8, 1], Extrapolation.CLAMP) }],
-  }));
-  const t = topicOf(a.topic);
-  const { isSaved, toggleSaved, isLiked, toggleLiked } = useStore();
-  const [burst, setBurst] = useState(0);
-  const [saveRing, setSaveRing] = useState(0);
-  const [showComments, setShowComments] = useState(false);
-
-  const saved = isSaved(a.id);
-  const liked = isLiked(a.id);
-
-  const heartPop = useSharedValue(0);
-  React.useEffect(() => {
-    if (!liked) return;
-    heartPop.value = withSequence(
-      withTiming(1, { duration: 120, easing: Easing.out(Easing.quad) }),
-      withTiming(0, { duration: 240, easing: Easing.out(Easing.cubic) }),
-    );
-  }, [liked, heartPop]);
-  const heartStyle = useAnimatedStyle(() => ({ transform: [{ scale: 1 + heartPop.value * 0.34 }] }));
-
-  const imgH = Math.max(height * 0.36, 240);
-
-  // ramp occupies exactly FEATHER px of a sheet that runs to the bottom
-  const { sheetStops, washStops } = useMemo(() => {
-    const sheetH = Math.max(height - (imgH - FEATHER), FEATHER + 1);
-    const f = FEATHER / sheetH;
-    return {
-      sheetStops: [0, f * 0.3, f * 0.55, f * 0.75, f * 0.9, f, 1] as [number, number, ...number[]],
-      // stays fully clear across the photo and only picks up colour once the
-      // glass has taken over — otherwise its top edge cuts a band across the image
-      washStops: [0, f * 0.85, Math.min(f + 0.16, 0.94), 1] as [number, number, ...number[]],
-    };
-  }, [height, imgH]);
-
-
-  const imgSource = a.imageUrl ? { uri: a.imageUrl } : artFor(a.topic);
-  // ambient glass: the article's own image, heavily blurred, becomes the
-  // card's backdrop so its palette bleeds through the whole surface
-  const tint = isDark ? 'rgba(8,11,20,0.40)' : 'rgba(255,255,255,0.26)';
-  // sharp image dissolves via a TRUE alpha mask — no bands, no seams
-  const fadeH = imgH + 110;
-
-  const sharpLayers = (
-    <>
-      <Image source={imgSource} style={{ width: '100%', height: fadeH }} contentFit="cover" recyclingKey={a.id} transition={280} />
-      {a.imageUrl ? (
-        <LinearGradient colors={[t.wash, 'rgba(0,0,0,0)']} style={StyleSheet.absoluteFill} />
-      ) : null}
-      <EasedScrim variant="top" style={{ position: 'absolute', left: 0, right: 0, top: 0, height: imgH * 0.5 }} />
-    </>
-  );
-
-  return (
-    <GestureDetector gesture={swipeToSource}>
-      <Animated.View style={[{ height, backgroundColor: c.bg, overflow: 'hidden' }, dragStyle]}>
-        {/* revealed as the card is pulled across */}
-        <Animated.View pointerEvents="none" style={[s.sourceHint, { top: height / 2 - 26 }, hintStyle]}>
-          <View style={[s.sourceHintCircle, { backgroundColor: c.brand }]}>
-            <LIcon name="external-link" size={19} color="#fff" strokeWidth={2.2} />
-          </View>
-          <Txt size={10.5} weight="bold" color={c.ink} style={{ marginTop: 6 }}>
-            Source
-          </Txt>
-        </Animated.View>
-    <Pressable onPress={() => nav.toggle()} style={{ flex: 1 }}>
-      <Image
-        source={imgSource}
-        style={StyleSheet.absoluteFill}
-        contentFit="cover"
-        blurRadius={90}
-        recyclingKey={a.id + '-ambient'}
-        transition={300}
-      />
-      <View style={[StyleSheet.absoluteFill, { backgroundColor: tint }]} />
-
-      {Platform.OS === 'web' ? (
-        // web fallback: translucent gradient melt (masked-view is native-only)
-        <View style={{ position: 'absolute', top: 0, left: 0, right: 0, height: fadeH, overflow: 'hidden' }}>
-          {sharpLayers}
-          <LinearGradient
-            colors={
-              isDark
-                ? (['rgba(10,14,23,0)', 'rgba(10,14,23,0.45)', 'rgba(10,14,23,0.72)', tint] as any)
-                : (['rgba(255,255,255,0)', 'rgba(255,255,255,0.3)', 'rgba(255,255,255,0.45)', tint] as any)
-            }
-            locations={[0, 0.5, 0.75, 1]}
-            style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: fadeH * 0.62 }}
-          />
-        </View>
-      ) : (
-        <MaskedView
-          style={{ position: 'absolute', top: 0, left: 0, right: 0, height: fadeH }}
-          maskElement={
-            <LinearGradient
-              colors={['#000', '#000', 'rgba(0,0,0,0.62)', 'rgba(0,0,0,0.22)', 'rgba(0,0,0,0)']}
-              locations={[0, 0.42, 0.66, 0.85, 1]}
-              style={{ flex: 1 }}
-            />
-          }
-        >
-          {sharpLayers}
-        </MaskedView>
-      )}
-
-      {/* pills live outside the fade so they stay crisp */}
-      <View style={[s.cardTop, { top: topInset + 10 }]}>
-        {isBreaking(a) ? (
-          <BreakingBadge />
-        ) : (
-          <View style={s.glassPill}>
-            <Txt size={11.5} weight="semibold" color="#fff" ls={0.3}>
-              {a.topic}
-            </Txt>
-          </View>
-        )}
-        <View style={s.glassPill}>
-          <Txt size={11.5} weight="medium" color="#fff">
-            {timeAgo(a.publishedAt)}
-          </Txt>
-        </View>
-      </View>
-
-      {/* frosted sheet that FEATHERS into the image — no hard edge.
-          The ambient backdrop beneath is already an image-blur, so the sheet
-          itself only needs a feathered tint (web adds real backdrop blur). */}
-      <View style={[s.sheet, { top: imgH - FEATHER }]}>
-        {Platform.OS === 'web' ? (
-          <BlurView intensity={26} tint={isDark ? 'dark' : 'light'} style={StyleSheet.absoluteFill} />
-        ) : null}
-        {/* A single gradient spanning the whole sheet — nothing is painted on
-            top of it, so there is no edge anywhere. Stops are derived from
-            FEATHER so the melt is the same pixel length on every screen, and
-            eased (not linear) so it never bands. */}
-        <LinearGradient
-          colors={
-            isDark
-              ? ([
-                  'rgba(12,17,29,0)',
-                  'rgba(12,17,29,0.07)',
-                  'rgba(12,17,29,0.19)',
-                  'rgba(12,17,29,0.37)',
-                  'rgba(12,17,29,0.50)',
-                  SHEET_DARK,
-                  SHEET_DARK,
-                ] as any)
-              : ([
-                  'rgba(255,255,255,0)',
-                  'rgba(255,255,255,0.07)',
-                  'rgba(255,255,255,0.20)',
-                  'rgba(255,255,255,0.40)',
-                  'rgba(255,255,255,0.54)',
-                  SHEET_LIGHT,
-                  SHEET_LIGHT,
-                ] as any)
-          }
-          locations={sheetStops}
-          style={StyleSheet.absoluteFill}
-        />
-        {/* the photo's colour carries on down into the sheet instead of
-            stopping dead at pure white */}
-        <LinearGradient
-          pointerEvents="none"
-          colors={['rgba(0,0,0,0)', 'rgba(0,0,0,0)', t.wash, 'rgba(0,0,0,0)'] as any}
-          locations={washStops}
-          style={StyleSheet.absoluteFill}
-        />
-
-        {/* Comments need room, so the headline climbs the card and gives up
-            lines; the panel is flex:1 and inherits everything that frees up,
-            while the sheet and footer stay exactly where they were. */}
-        <Animated.View
-          layout={CONTENT_SHIFT}
-          style={{ flex: 1, paddingHorizontal: 26, paddingTop: showComments ? topInset + 44 : FEATHER + 22 }}
-        >
-        <Headline
-          numberOfLines={showComments ? 2 : 4}
-          style={{ fontSize: showComments ? 19 : 24, lineHeight: showComments ? 24 : 29, letterSpacing: -0.7 }}
-        >
-          {a.title}
-        </Headline>
-
-        <View style={{ flex: 1, marginTop: 22 }}>
-          {showComments ? (
-            <CommentsPanel articleId={a.id} onClose={() => setShowComments(false)} />
-          ) : (
-            <Animated.View
-              entering={FadeInDown.duration(320).springify().damping(30).stiffness(250).mass(0.9)}
-              style={{ flex: 1 }}
-            >
-              <SummaryBody a={a} />
-            </Animated.View>
-          )}
-        </View>
-
-        {/* footer */}
-        <View style={[s.footer, { paddingBottom: 26 }]}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
-            <LinearGradient colors={t.grad} style={s.pubDot} />
-            <Txt size={13} weight="semibold" numberOfLines={1} style={{ flexShrink: 1 }}>
-              {a.publisher}
-            </Txt>
-            <LIcon name="badge-check" size={14} color={c.brand} style={{ marginLeft: 5 }} />
-          </View>
-          <View style={{ flexDirection: 'row', gap: 8 }}>
-            <View>
-              <Press
-                haptic={false}
-                scaleTo={0.9}
-                onPress={() => {
-                  soft();
-                  if (!liked) setBurst((b) => b + 1);
-                  toggleLiked(a.id, a.topic);
-                }}
-                style={[s.actionCircle, { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(11,13,18,0.045)' }]}
-              >
-                <Animated.View style={heartStyle}>
-                  <LIcon name="heart" size={18} color={liked ? c.breaking : c.ink} fill={liked ? c.breaking : 'none'} />
-                </Animated.View>
-              </Press>
-              {burst > 0 && liked ? <HeartBurst key={burst} /> : null}
-            </View>
-            <View>
-              <Press
-                haptic={false}
-                scaleTo={0.9}
-                onPress={() => {
-                  if (!saved) {
-                    saveHaptic();
-                    setSaveRing((r) => r + 1);
-                  } else {
-                    tick();
-                  }
-                  toggleSaved(a.id, a.topic);
-                }}
-                style={[s.actionCircle, { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(11,13,18,0.045)' }, saved ? { backgroundColor: c.brand, boxShadow: '0 6px 18px rgba(57,121,255,0.4)' } : null]}
-              >
-                <LIcon name="bookmark" size={16} color={saved ? '#fff' : c.ink} fill={saved ? '#fff' : 'none'} />
-              </Press>
-              {saveRing > 0 && saved ? <SaveRing key={saveRing} color={c.brand} /> : null}
-            </View>
-            <Press
-              haptic={false}
-              scaleTo={0.9}
-              onPress={() => {
-                track({ article_id: a.id, event_type: 'share', topic: a.topic });
-                Share.share({ message: `${a.title}\n\n${a.url}` });
-              }}
-              style={[s.actionCircle, { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(11,13,18,0.045)' }]}
-            >
-              <LIcon name="share-2" size={16} color={c.ink} />
-            </Press>
-            <Press
-              haptic={false}
-              scaleTo={0.9}
-              onPress={() => {
-                tick();
-                setShowComments((v) => !v);
-              }}
-              style={[
-                s.actionCircle,
-                { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(11,13,18,0.045)' },
-                showComments ? { backgroundColor: c.brand } : null,
-              ]}
-            >
-              <LIcon
-                name="message-circle"
-                size={16}
-                color={showComments ? '#fff' : c.ink}
-                fill={showComments ? '#fff' : 'none'}
-              />
-              {commentCount > 0 ? (
-                <View style={[s.countBadge, { backgroundColor: c.brand }]}>
-                  <Txt size={9.5} weight="bold" color="#fff">
-                    {commentCount > 99 ? '99+' : commentCount}
-                  </Txt>
-                </View>
-              ) : null}
-            </Press>
-          </View>
-        </View>
-        </Animated.View>
-      </View>
-        </Pressable>
-      </Animated.View>
-    </GestureDetector>
-  );
-}
-
-/* Reading type. Ragged right, which is what news apps actually do — justifying
-   a phone-width column trades an even edge for uneven word spacing, and the rag
-   also gives the eye a landmark to find its place again after glancing away.
-   Hyphenation and the highQuality break strategy stay: they tighten the rag by
-   letting long words split and by weighing the whole paragraph rather than
-   greedily filling one line at a time. */
-function SummaryBody({ a }: { a: Article }) {
-  const { c, isDark } = useTheme();
-  return (
-    <View style={{ flex: 1 }}>
-      <Txt
-        size={16.5}
-        lh={26}
-        color={isDark ? '#DCE4F0' : '#1E242F'}
-        numberOfLines={11}
-        android_hyphenationFrequency="full"
-        textBreakStrategy="highQuality"
-      >
-        {a.summary}
-      </Txt>
-    </View>
-  );
-}
-
-function SaveRing({ color }: { color: string }) {
-  const v = useSharedValue(0);
-  React.useEffect(() => {
-    v.value = withTiming(1, { duration: 480, easing: Easing.out(Easing.cubic) });
-  }, [v]);
-  const a = useAnimatedStyle(() => ({
-    opacity: 1 - v.value,
-    transform: [{ scale: 1 + v.value * 1.1 }],
-  }));
-  return (
-    <Animated.View
-      pointerEvents="none"
-      style={[
-        {
-          position: 'absolute',
-          top: -2,
-          left: -2,
-          width: 46,
-          height: 46,
-          borderRadius: 23,
-          borderWidth: 2,
-          borderColor: color,
-        },
-        a,
-      ]}
-    />
-  );
-}
-
-// One driver, no springs: particles fly out, shrink and fade in 520ms, then
-// the whole thing is gone. Bouncy per-dot ZoomIn read as jitter.
-function HeartBurst() {
-  const v = useSharedValue(0);
-  React.useEffect(() => {
-    v.value = withTiming(1, { duration: 520, easing: Easing.out(Easing.cubic) });
-  }, [v]);
-
-  const ring = useAnimatedStyle(() => ({
-    opacity: (1 - v.value) * 0.9,
-    transform: [{ scale: 0.4 + v.value * 1.5 }],
-  }));
-
-  return (
-    <View pointerEvents="none" style={s.burstWrap}>
-      <Animated.View style={[s.burstRing, ring]} />
-      {[...Array(6)].map((_, i) => {
-        const angle = (i / 6) * Math.PI * 2 - Math.PI / 2;
-        return <BurstDot key={i} angle={angle} v={v} />;
-      })}
-    </View>
-  );
-}
-
-function BurstDot({ angle, v }: { angle: number; v: SharedValue<number> }) {
-  const a = useAnimatedStyle(() => {
-    const d = 8 + v.value * 22;
-    return {
-      opacity: 1 - v.value,
-      transform: [
-        { translateX: Math.cos(angle) * d },
-        { translateY: Math.sin(angle) * d },
-        { scale: interpolate(v.value, [0, 0.35, 1], [0.2, 1, 0.15], Extrapolation.CLAMP) },
-      ],
-    };
-  });
-  return <Animated.View style={[s.burstDot, { position: 'absolute' }, a]} />;
-}
-
-const s = StyleSheet.create({
-  sourceHint: {
-    position: 'absolute',
-    left: 18,
-    alignItems: 'center',
-    zIndex: 5,
-  },
-  sourceHintCircle: {
-    width: 52,
-    height: 52,
-    borderRadius: 26,
-    alignItems: 'center',
-    justifyContent: 'center',
-    boxShadow: '0 8px 24px rgba(57,121,255,0.45)',
-  },
-  countBadge: {
-    position: 'absolute',
-    top: -2,
-    right: -3,
-    minWidth: 17,
-    height: 17,
-    borderRadius: 9,
-    paddingHorizontal: 4,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  cardTop: {
-    position: 'absolute',
-    left: 22,
-    right: 66,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-  glassPill: {
-    backgroundColor: 'rgba(11,13,18,0.32)',
-    borderRadius: radius.pill,
-    paddingHorizontal: 13,
-    paddingVertical: 7,
-  },
-  footer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingTop: 12,
-  },
-  sheet: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: 0,
-  },
-  pubDot: { width: 9, height: 9, borderRadius: 5, marginRight: 8 },
-  actionCircle: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
-    backgroundColor: 'rgba(11,13,18,0.045)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  burstWrap: {
-    position: 'absolute',
-    top: 11,
-    left: 11,
-    width: 20,
-    height: 20,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  burstDot: {
-    width: 5,
-    height: 5,
-    borderRadius: 2.5,
-    backgroundColor: colors.breaking,
-  },
-  burstRing: {
-    position: 'absolute',
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    borderWidth: 1.5,
-    borderColor: colors.breaking,
   },
 });
