@@ -115,7 +115,7 @@ export function PixCard({
           decelerationRate="fast"
           style={{ flex: 1 }}
         >
-          <SlideOne a={a} style={style} runs={runs} W={W} H={H} topicGrad={t.grad} wash={t.wash} />
+          <SlideOne a={a} style={style} runs={runs} W={W} H={H} topicGrad={t.grad} wash={t.wash} onPage={onPage} />
           <SlideTwo a={a} style={style} bullets={bullets} W={W} H={H} wash={t.wash} />
         </ScrollView>
 
@@ -137,7 +137,7 @@ export function PixCard({
           </View>
         </View>
 
-        <View style={s.dots} pointerEvents="none">
+        <View style={[s.dots, onPage ? { bottom: 50 } : null]} pointerEvents="none">
           {[0, 1].map((i) => (
             <View
               key={i}
@@ -151,7 +151,7 @@ export function PixCard({
           ))}
         </View>
 
-        <View style={s.actions}>
+        <View style={[s.actions, onPage ? { bottom: 72 } : null]}>
           <PixAction
             icon="thumbs-up"
             label="Like"
@@ -227,7 +227,7 @@ export function PixCard({
         style={[
           s.footer,
           onPage
-            ? { position: 'absolute', left: 22, right: 22, bottom: 18, marginHorizontal: 0 }
+            ? { position: 'absolute', left: 22, right: 22, bottom: 16, marginHorizontal: 0, marginTop: 0 }
             : { marginHorizontal: GUTTER },
         ]}
       >
@@ -324,6 +324,7 @@ function SlideOne({
   H,
   topicGrad,
   wash,
+  onPage,
 }: {
   a: Article;
   style: PixStyle;
@@ -332,20 +333,30 @@ function SlideOne({
   H: number;
   topicGrad: [string, string];
   wash: string;
+  onPage?: boolean;
 }) {
   const { c } = useTheme();
   const src = a.imageUrl ? { uri: a.imageUrl } : artFor(a.topic);
   const type = HEADLINE_SIZE[style.size];
 
   // how much of the slide the photo occupies
-  const photoH = style.frame === 'bleed' ? H : style.frame === 'inset' ? Math.round(H * 0.58) : Math.round(H * 0.4);
+  /* 0.58 was tuned for the 480pt list card. On a full page that leaves a panel
+     nearly 350pt deep with the headline pinned to the bottom of it, and the
+     empty middle is the blank space the design reads as. The photo takes more
+     of a page, and the story starts immediately beneath it instead of being
+     pushed to the floor. */
+  const insetRatio = onPage ? 0.66 : 0.58;
+  const photoH =
+    style.frame === 'bleed' ? H : style.frame === 'inset' ? Math.round(H * insetRatio) : Math.round(H * 0.4);
 
   const place =
     style.anchor === 'top'
       ? { top: 62 }
       : style.anchor === 'centre'
         ? { top: 0, bottom: 0, justifyContent: 'center' as const }
-        : { bottom: 78 };
+        : onPage
+          ? { top: photoH + 24 } // hangs off the photo, not off the floor
+          : { bottom: 78 };
 
   return (
     <View style={{ width: W, height: H }}>

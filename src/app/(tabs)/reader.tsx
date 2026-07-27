@@ -340,12 +340,7 @@ export default function Reader() {
       if (kind === 'pix') {
         return (
           <PageShell index={index} pageH={pageH} scrollY={scrollY}>
-            <PixPage
-              a={item}
-              height={pageH}
-              topInset={topInset}
-              commentCount={counts[item.id] ?? 0}
-            />
+            <PixPage a={item} height={pageH} commentCount={counts[item.id] ?? 0} />
           </PageShell>
         );
       }

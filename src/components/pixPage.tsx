@@ -4,9 +4,7 @@ import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { topicOf, BLUR_MAX } from '@/theme';
 import { useTheme } from '@/lib/theme';
-import { Txt, LIcon } from './ui';
 import { PixCard } from './pixCard';
-import { NAVBAR_CLEARANCE } from './navbar';
 import { artFor } from '@/lib/topicArt';
 import type { Article } from '@/lib/content';
 
@@ -25,12 +23,10 @@ import type { Article } from '@/lib/content';
 export function PixPage({
   a,
   height,
-  topInset,
   commentCount,
 }: {
   a: Article;
   height: number;
-  topInset: number;
   commentCount: number;
 }) {
   const { isDark } = useTheme();
@@ -63,26 +59,14 @@ export function PixPage({
         <PixCard a={a} index={0} variant="page" height={height} commentCount={commentCount} />
       </View>
 
-      {/* the format label rides over the photo instead of stealing a band above it */}
-      <View style={[st.eyebrow, { top: topInset + 52 }]} pointerEvents="none">
-        <LIcon name="images" size={12} color="rgba(255,255,255,0.66)" strokeWidth={2.2} />
-        <Txt size={10} weight="bold" color="rgba(255,255,255,0.66)" ls={1.6}>
-          PICTURE STORY
-        </Txt>
-      </View>
+      {/* No format label. Full bleed, a photograph filling two thirds of the
+          screen and page dots — the format announces itself. The caption was a
+          fourth thing competing for the top strip with the topic pill, the
+          timestamp and the dial button, which is the clutter. */}
     </View>
   );
 }
 
 const st = StyleSheet.create({
   pixPage: { flex: 1 },
-  eyebrow: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-  },
 });
