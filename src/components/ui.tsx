@@ -7,17 +7,17 @@ import Animated, {
   withTiming,
   withRepeat,
   withSequence,
-  interpolateColor,
-  ZoomIn,
 } from 'react-native-reanimated';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Image } from 'expo-image';
+import Svg, { Circle } from 'react-native-svg';
 import { artFor } from '@/lib/topicArt';
 import * as Lucide from 'lucide-react-native';
-import * as Haptics from 'expo-haptics';
 import { tick } from '@/lib/haptics';
+import { useMotionAllowed } from '@/lib/motion';
 import { colors, font, display, type, radius, spring, scrim } from '@/theme';
 import { useTheme } from '@/lib/theme';
+import { enterReward } from '@/lib/transitions';
 
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 
@@ -52,6 +52,22 @@ export function LIcon({
 
 /* ---------- Typography ---------- */
 
+/* Type scales with the reader's system font size, up to a point.
+
+   Every size in this app is a fixed point value paired with a fixed
+   lineHeight, and `numberOfLines` is used almost everywhere — so at Android's
+   largest display sizes (which go well past 2x) headlines did not reflow, they
+   clipped, and card layouts built around a known text height broke outright.
+   Ignoring the setting entirely was not an option either: it is the single
+   most-used accessibility feature there is.
+
+   1.3 is the compromise: a third larger is a real, useful increase and every
+   layout here survives it. Past that the app would need a genuinely different
+   set of layouts rather than a bigger font, which is a larger piece of work
+   than a multiplier. Applied at the two components every string in the app
+   goes through, so there is one place to raise it later. */
+const MAX_FONT_SCALE = 1.3;
+
 type TStyle = { size: number; lh: number; ls: number; f: string };
 function makeText(t: TStyle, extra?: object) {
   return function T(props: TextProps & { color?: string }) {
@@ -59,6 +75,7 @@ function makeText(t: TStyle, extra?: object) {
     const { color = c.ink, style, ...rest } = props;
     return (
       <Text
+        maxFontSizeMultiplier={MAX_FONT_SCALE}
         {...rest}
         style={[{ fontFamily: t.f, fontSize: t.size, lineHeight: t.lh, letterSpacing: t.ls, color, userSelect: 'none' as const }, extra, style]}
       />
@@ -91,7 +108,13 @@ export function Txt(
   const { size = 14, lh, color = c.ink, weight = 'regular', ls = 0, display: useDisplay, style, ...rest } = props;
   const family = useDisplay ? display[weight] ?? display.bold : font[weight];
   return (
-    <Text {...rest} style={[{ fontFamily: family, fontSize: size, lineHeight: lh ?? size * 1.45, letterSpacing: ls, color, userSelect: 'none' as const }, style]} />
+    <Text
+      // before the spread, so a caller that genuinely needs a different cap
+      // can still pass one — see MAX_FONT_SCALE above
+      maxFontSizeMultiplier={MAX_FONT_SCALE}
+      {...rest}
+      style={[{ fontFamily: family, fontSize: size, lineHeight: lh ?? size * 1.45, letterSpacing: ls, color, userSelect: 'none' as const }, style]}
+    />
   );
 }
 
@@ -151,7 +174,11 @@ export function Press({
       onPressIn={() => (v.value = withSpring(1, spring.snappy))}
       onPressOut={() => (v.value = withSpring(0, spring.gentle))}
       onPress={(e) => {
-        if (haptic) Haptics.selectionAsync();
+        // tick() rather than Haptics.selectionAsync(): on Android
+        // selectionAsync falls through to the raw vibrator, which is the soft
+        // buzz this app deliberately avoids everywhere else. tick() routes to
+        // performAndroidHapticsAsync and shares the global rate gate.
+        if (haptic) tick();
         onPress?.(e);
       }}
       style={[a, style]}
@@ -184,48 +211,6 @@ export function IconButton({
       <LIcon name={name} size={size} color={color === colors.ink ? c.ink : color} />
       {badge ? <View style={s.badge} /> : null}
     </Press>
-  );
-}
-
-/* ---------- Category pill — borderless, stretches when active ---------- */
-
-export function Chip({
-  label,
-  active,
-  onPress,
-  icon,
-}: {
-  label: string;
-  active?: boolean;
-  onPress?: () => void;
-  icon?: string;
-}) {
-  const t = useSharedValue(active ? 1 : 0);
-  useEffect(() => {
-    t.value = withSpring(active ? 1 : 0, spring.snappy);
-  }, [active, t]);
-
-  const { c, isDark } = useTheme();
-  const inactiveBg = isDark ? 'rgba(255,255,255,0.08)' : '#EEF1F6';
-  const a = useAnimatedStyle(() => ({
-    backgroundColor: interpolateColor(t.value, [0, 1], [inactiveBg, c.brand]),
-    paddingHorizontal: 17 + t.value * 5,
-    transform: [{ scale: 1 + t.value * 0.02 }],
-  }));
-
-  return (
-    <AnimatedPressable
-      onPress={() => {
-        tick();
-        onPress?.();
-      }}
-      style={[s.chip, a, active ? { boxShadow: '0 6px 20px rgba(57,121,255,0.35)' } : null]}
-    >
-      {icon ? <LIcon name={icon} size={13.5} color={active ? '#fff' : c.inkSoft} style={{ marginRight: 6 }} /> : null}
-      <Txt size={13.5} weight="semibold" color={active ? '#fff' : c.inkSoft}>
-        {label}
-      </Txt>
-    </AnimatedPressable>
   );
 }
 
@@ -378,7 +363,7 @@ export function TopicBubble({
         </View>
         {selected ? (
           <Animated.View
-            entering={ZoomIn.springify().damping(18).stiffness(260)}
+            entering={enterReward()}
             style={{
               position: 'absolute',
               top: 2,
@@ -397,6 +382,57 @@ export function TopicBubble({
         ) : null}
       </View>
     </Wrapper>
+  );
+}
+
+/* ---------- Progress ring ----------
+
+   A stroked arc, drawn rather than animated. Every place this is used sits
+   next to a number the reader can already read — the arc is that number's
+   shape, not an effect, so there is nothing here that needs to move (and
+   nothing for Reduce Motion to suppress). */
+
+export function ProgressRing({
+  size,
+  stroke,
+  value,
+  color,
+  track,
+  children,
+}: {
+  size: number;
+  stroke: number;
+  /** 0..1; anything outside that, or NaN, is clamped */
+  value: number;
+  color: string;
+  track: string;
+  children?: React.ReactNode;
+}) {
+  const r = (size - stroke) / 2;
+  const circ = 2 * Math.PI * r;
+  const v = Math.max(0, Math.min(1, Number.isFinite(value) ? value : 0));
+  return (
+    <View style={{ width: size, height: size, alignItems: 'center', justifyContent: 'center' }}>
+      <Svg width={size} height={size} style={StyleSheet.absoluteFill}>
+        <Circle cx={size / 2} cy={size / 2} r={r} stroke={track} strokeWidth={stroke} fill="none" />
+        {v > 0 ? (
+          <Circle
+            cx={size / 2}
+            cy={size / 2}
+            r={r}
+            stroke={color}
+            strokeWidth={stroke}
+            fill="none"
+            strokeLinecap="round"
+            strokeDasharray={`${circ} ${circ}`}
+            strokeDashoffset={circ * (1 - v)}
+            // start at twelve o'clock rather than three
+            transform={`rotate(-90 ${size / 2} ${size / 2})`}
+          />
+        ) : null}
+      </Svg>
+      {children}
+    </View>
   );
 }
 
@@ -429,22 +465,34 @@ export function SectionHeader({
 /* ---------- Shimmer ---------- */
 
 export function Shimmer({ style }: { style: ViewStyle | ViewStyle[] }) {
-  const { isDark } = useTheme();
+  const { c } = useTheme();
+  const motion = useMotionAllowed();
   const v = useSharedValue(0.5);
   useEffect(() => {
+    // a still placeholder still says "loading"; a pulsing one is decoration
+    if (!motion) {
+      v.value = 0.8;
+      return;
+    }
     v.value = withRepeat(withSequence(withTiming(1, { duration: 650 }), withTiming(0.5, { duration: 650 })), -1);
-  }, [v]);
+  }, [v, motion]);
   const a = useAnimatedStyle(() => ({ opacity: v.value }));
-  return <Animated.View style={[{ backgroundColor: isDark ? 'rgba(255,255,255,0.07)' : '#EDF1F7', borderRadius: 14 }, style, a]} />;
+  return <Animated.View style={[{ backgroundColor: c.bgSoft, borderRadius: 14 }, style, a]} />;
 }
 
 /* ---------- Breaking badge ---------- */
 
 export function BreakingBadge() {
+  const motion = useMotionAllowed();
   const v = useSharedValue(1);
   useEffect(() => {
+    // the word BREAKING carries the urgency on its own; the pulse is emphasis
+    if (!motion) {
+      v.value = 1;
+      return;
+    }
     v.value = withRepeat(withSequence(withTiming(0.5, { duration: 700 }), withTiming(1, { duration: 700 })), -1);
-  }, [v]);
+  }, [v, motion]);
   const dot = useAnimatedStyle(() => ({ opacity: v.value }));
   return (
     <View style={s.breaking}>
@@ -529,13 +577,6 @@ const s = StyleSheet.create({
     backgroundColor: colors.breaking,
     borderWidth: 1.5,
     borderColor: 'transparent',
-  },
-  chip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    height: 40,
-    borderRadius: radius.pill,
-    marginRight: 9,
   },
   pillTab: {
     height: 38,

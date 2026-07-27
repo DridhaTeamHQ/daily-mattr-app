@@ -11,13 +11,14 @@ import Animated, {
   Extrapolation,
   type SharedValue,
 } from 'react-native-reanimated';
-import { colors, radius, shadow, topicOf } from '@/theme';
+import { colors, radius, shadow, topicOf, stagger } from '@/theme';
 import { useTheme, glassCard } from '@/lib/theme';
 import { StoryTitle, CardTitle, Txt, Press, BreakingBadge, EasedScrim, LIcon } from './ui';
-import { type Article, timeAgo, isBreaking } from '@/lib/content';
+import { type Article, timeAgo, isBreaking, cardLabel } from '@/lib/content';
 import { useStore } from '@/lib/store';
 import { trackImpression } from '@/lib/telemetry';
 import { artFor } from '@/lib/topicArt';
+import { enterContent, enterItem } from '@/lib/transitions';
 
 const { width: W, height: H } = Dimensions.get('window');
 
@@ -29,8 +30,11 @@ export function StoryCard({ a, index = 0 }: { a: Article; index?: number }) {
   useEffect(() => trackImpression(a.id, a.topic), [a.id, a.topic]);
 
   return (
-    <Animated.View entering={FadeInDown.delay(index * 100).springify().damping(30).stiffness(250).mass(0.9)}>
-      <Press onPress={() => router.push(`/article/${a.id}`)} style={[s.story, shadow.hero]} scaleTo={0.985}>
+    <Animated.View entering={enterItem(index, stagger.loose)}>
+      <Press onPress={() => router.push(`/article/${a.id}`)}
+        accessible
+        accessibilityRole="button"
+        accessibilityLabel={cardLabel(a)} style={[s.story, shadow.hero]} scaleTo={0.985}>
         {a.imageUrl ? (
           <>
             <Image source={{ uri: a.imageUrl }} style={StyleSheet.absoluteFill} contentFit="cover" recyclingKey={a.id} transition={300} />
@@ -83,8 +87,11 @@ export function TopStoryCard({ a }: { a: Article }) {
   useEffect(() => trackImpression(a.id, a.topic), [a.id, a.topic]);
 
   return (
-    <Animated.View entering={FadeInDown.springify().damping(30).stiffness(250).mass(0.9)}>
-      <Press onPress={() => router.push(`/article/${a.id}`)} style={[s.topStory, shadow.lift]} scaleTo={0.985}>
+    <Animated.View entering={enterContent()}>
+      <Press onPress={() => router.push(`/article/${a.id}`)}
+        accessible
+        accessibilityRole="button"
+        accessibilityLabel={cardLabel(a)} style={[s.topStory, shadow.lift]} scaleTo={0.985}>
         {a.imageUrl ? (
           <>
             <Image source={{ uri: a.imageUrl }} style={StyleSheet.absoluteFill} contentFit="cover" recyclingKey={a.id} transition={280} />
@@ -130,27 +137,47 @@ export function TopStoryCard({ a }: { a: Article }) {
 
 /* ---------- Borderless article row ---------- */
 
+/* `animate` defaults OFF, and that default is the point.
+
+   This row used to always run FadeInDown on mount. Inside a virtualized list
+   "mount" does not mean "first paint" — it means "paged in", which happens on
+   every scroll. So every row entering the viewport slid up twenty points and
+   faded over half a second, against the direction of the finger, for the
+   entire length of the feed. No framerate fix can help with that: the content
+   is genuinely moving independently of the scroll, and it reads as jitter even
+   at a locked 60fps.
+
+   Screens that render rows once from a plain map (search, profile) opt back
+   in. Anything inside a FlatList must not. */
 export function ArticleRow({
   a,
   showTopic = true,
   index = 0,
   divider = true,
   variant = 'plain',
+  animate = false,
 }: {
   a: Article;
   showTopic?: boolean;
   index?: number;
   divider?: boolean;
   variant?: 'card' | 'plain';
+  animate?: boolean;
 }) {
   const router = useRouter();
   const { c, isDark } = useTheme();
   useEffect(() => trackImpression(a.id, a.topic), [a.id, a.topic]);
+  const enter = animate
+    ? enterItem(index)
+    : undefined;
 
   if (variant === 'card') {
     return (
-      <Animated.View entering={FadeInDown.delay(Math.min(index, 6) * 50).springify().damping(30).stiffness(250).mass(0.9)}>
-        <Press onPress={() => router.push(`/article/${a.id}`)} style={[s.row, isDark ? null : shadow.soft, glassCard(c, isDark)]}>
+      <Animated.View entering={enter}>
+        <Press onPress={() => router.push(`/article/${a.id}`)}
+        accessible
+        accessibilityRole="button"
+        accessibilityLabel={cardLabel(a)} style={[s.row, isDark ? null : shadow.soft, glassCard(c, isDark)]}>
           <View style={{ flex: 1, paddingRight: 16 }}>
             <CardTitle numberOfLines={2}>{a.title}</CardTitle>
             <Txt size={12} weight="medium" color={c.inkFaint} style={{ marginTop: 8 }}>
@@ -166,8 +193,11 @@ export function ArticleRow({
 
   // plain: no box, hairline divider, quiet single-line meta — the calm default
   return (
-    <Animated.View entering={FadeInDown.delay(Math.min(index, 6) * 50).springify().damping(30).stiffness(250).mass(0.9)}>
-      <Press onPress={() => router.push(`/article/${a.id}`)} style={s.rowPlain}>
+    <Animated.View entering={enter}>
+      <Press onPress={() => router.push(`/article/${a.id}`)}
+        accessible
+        accessibilityRole="button"
+        accessibilityLabel={cardLabel(a)} style={s.rowPlain}>
         <View style={{ flex: 1, paddingRight: 16 }}>
           <Txt size={16} lh={21.5} weight="bold" ls={-0.35} numberOfLines={3}>
             {a.title}
@@ -219,11 +249,14 @@ export function CarouselCard({
   });
 
   return (
-    <Animated.View entering={FadeInDown.delay(Math.min(index, 5) * 70).springify().damping(30).stiffness(250).mass(0.9)}>
+    <Animated.View entering={enterItem(index, stagger.loose)}>
       {/* transform lives on an inner view so the entering animation can't clobber it */}
       <Animated.View style={focus}>
       <Press
         onPress={() => router.push(`/article/${a.id}`)}
+        accessible
+        accessibilityRole="button"
+        accessibilityLabel={cardLabel(a)}
         scaleTo={0.975}
         style={[s.carCard, isDark ? null : shadow.soft, glassCard(c, isDark)]}
       >
@@ -265,8 +298,11 @@ export function RecommendCard({ a, index = 0 }: { a: Article; index?: number }) 
   useEffect(() => trackImpression(a.id, a.topic), [a.id, a.topic]);
 
   return (
-    <Animated.View entering={FadeInDown.delay(Math.min(index, 5) * 80).springify().damping(30).stiffness(250).mass(0.9)}>
-      <Press onPress={() => router.push(`/article/${a.id}`)} style={[s.recCard, isDark ? null : shadow.soft, glassCard(c, isDark)]}>
+    <Animated.View entering={enterItem(index, stagger.loose)}>
+      <Press onPress={() => router.push(`/article/${a.id}`)}
+        accessible
+        accessibilityRole="button"
+        accessibilityLabel={cardLabel(a)} style={[s.recCard, isDark ? null : shadow.soft, glassCard(c, isDark)]}>
         <View style={s.recImageWrap}>
           {a.imageUrl ? (
             <>
@@ -310,7 +346,10 @@ export function TrendingRow({ a, rank }: { a: Article; rank: number }) {
   const router = useRouter();
   const { isDark } = useTheme();
   return (
-    <Press onPress={() => router.push(`/article/${a.id}`)} style={s.trendRow}>
+    <Press onPress={() => router.push(`/article/${a.id}`)}
+        accessible
+        accessibilityRole="button"
+        accessibilityLabel={cardLabel(a)} style={s.trendRow}>
       <Txt size={34} weight="extrabold" color={isDark ? 'rgba(255,255,255,0.14)' : 'rgba(11,13,18,0.1)'} style={{ width: 52, letterSpacing: -1.5 }}>
         {String(rank).padStart(2, '0')}
       </Txt>
