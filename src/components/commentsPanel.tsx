@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { View, TextInput, StyleSheet, ActivityIndicator, ScrollView } from 'react-native';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
+import Animated from 'react-native-reanimated';
 import { LinearGradient } from 'expo-linear-gradient';
 import { radius } from '@/theme';
 import { useTheme } from '@/lib/theme';
@@ -16,6 +16,7 @@ import {
 } from '@/lib/comments';
 import { timeAgo } from '@/lib/content';
 import { soft, tick } from '@/lib/haptics';
+import { enterContent, enterItem, enterChrome } from '@/lib/transitions';
 
 /* Takes the place of the summary when the comment button is tapped: the story
    text steps aside, the thread steps in, and the card never leaves the deck. */
@@ -77,7 +78,7 @@ export function CommentsPanel({ articleId, onClose }: { articleId: string; onClo
   const total = data?.length ?? 0;
 
   return (
-    <Animated.View entering={FadeInDown.duration(260).springify().damping(30).stiffness(260).mass(0.8)} style={{ flex: 1 }}>
+    <Animated.View entering={enterContent()} style={{ flex: 1 }}>
       <View style={[s.head, { borderBottomColor: line }]}>
         <Txt size={14} weight="bold" ls={-0.2}>
           Comments{total ? ` · ${total}` : ''}
@@ -100,7 +101,7 @@ export function CommentsPanel({ articleId, onClose }: { articleId: string; onClo
           <ActivityIndicator color={c.brand} />
         </View>
       ) : rows.length === 0 ? (
-        <Animated.View entering={FadeIn.duration(240)} style={s.centre}>
+        <Animated.View entering={enterChrome()} style={s.centre}>
           <LIcon name="message-circle" size={22} color={c.inkFaint} />
           <Txt size={13.5} weight="semibold" color={c.inkSoft} style={{ marginTop: 8 }}>
             No comments yet
@@ -114,7 +115,7 @@ export function CommentsPanel({ articleId, onClose }: { articleId: string; onClo
           {rows.map(({ comment: x, isReply }, i) => (
             <Animated.View
               key={x.id}
-              entering={FadeInDown.delay(Math.min(i, 6) * 30).springify().damping(30).stiffness(250).mass(0.9)}
+              entering={enterItem(i)}
               style={[s.row, isReply ? { paddingLeft: 34 } : null]}
             >
               <LinearGradient
@@ -187,7 +188,7 @@ export function CommentsPanel({ articleId, onClose }: { articleId: string; onClo
       )}
 
       {replyTo ? (
-        <Animated.View entering={FadeIn.duration(180)} style={[s.replyBar, { backgroundColor: field }]}>
+        <Animated.View entering={enterChrome()} style={[s.replyBar, { backgroundColor: field }]}>
           <Txt size={11.5} weight="medium" color={c.inkSoft} numberOfLines={1} style={{ flex: 1 }}>
             Replying to <Txt size={11.5} weight="bold" color={c.ink}>{nameFor(replyTo.deviceId)}</Txt>
           </Txt>

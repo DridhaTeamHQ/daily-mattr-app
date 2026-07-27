@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-import { View, Pressable, StyleSheet, Platform } from 'react-native';
+import { View, Pressable, StyleSheet } from 'react-native';
 import { tick } from '@/lib/haptics';
 import { useRouter } from 'expo-router';
 import Animated, {
@@ -7,16 +7,11 @@ import Animated, {
   useAnimatedStyle,
   withSpring,
   interpolate,
-  LinearTransition,
 } from 'react-native-reanimated';
 
 const APressable = Animated.createAnimatedComponent(Pressable);
-// web's layout-transition shim strips flexGrow mid-morph and logs a style
-// conflict — the pill morph is native-only
-const TAB_MORPH =
-  Platform.OS === 'web' ? undefined : LinearTransition.springify().damping(30).stiffness(260).mass(0.8);
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { colors, shadow, spring } from '@/theme';
+import { shadow, spring } from '@/theme';
 import { useTheme } from '@/lib/theme';
 import { useNavVisible } from '@/lib/navVisibility';
 import { LIcon, Txt, Press } from './ui';
@@ -30,6 +25,9 @@ const TABS: Record<string, { icon: string; label: string }> = {
 };
 
 const BAR_HEIGHT = 60;
+const PILL_PAD = 8;
+// how many "shares" of the pill the focused tab takes vs an unfocused one
+const ACTIVE_SHARE = 1.9;
 
 // Wabi-style floating cluster: circular search button + white tab pill.
 // Active tab = solid icon + label; inactive = quiet outline icon.
@@ -37,17 +35,35 @@ export function GlassNavbar({ state, navigation }: TabBarProps) {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { c, isDark } = useTheme();
+
+  // 0..1, animated by the provider. Read only — never animated from in here,
+  // because starting an animation inside useAnimatedStyle restarts it on every
+  // render (see lib/navVisibility.tsx).
   const visible = useNavVisible();
   const visAnim = useAnimatedStyle(() => ({
-    transform: [{ translateY: withSpring(visible ? 0 : 150, spring.gentle) }],
-    opacity: withSpring(visible ? 1 : 0, spring.gentle),
+    transform: [{ translateY: (1 - visible.value) * 150 }],
+    opacity: visible.value,
   }));
+
+  // The focused tab used to be widened by flipping flexGrow in React and
+  // letting a LinearTransition layout animation catch up. Layout animations
+  // over flex are unreliable — the pill would jump straight to its end state
+  // or leave a tab collapsed, which is the glitch. Each tab now springs its
+  // own flexGrow on the UI thread instead (see TabButton): no layout
+  // animation, no measurement, and no React render inside the loop.
   const surface = isDark
     ? { backgroundColor: 'rgba(21,28,44,0.92)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.09)' }
     : { backgroundColor: '#FFFFFF' };
 
   return (
-    <Animated.View pointerEvents={visible ? 'box-none' : 'none'} style={[s.wrap, { bottom: Math.max(insets.bottom, 14) + 6 }, visAnim]}>
+    /* pointerEvents is a static style, not an animated one. Driving it from
+       the shared value meant Reanimated applying a non-numeric, non-animatable
+       prop on the UI thread every frame; hidden, the bar is translated 150pt
+       clear of the screen anyway, so there is nothing there to tap. */
+    <Animated.View
+      pointerEvents="box-none"
+      style={[s.wrap, { bottom: Math.max(insets.bottom, 14) + 6 }, visAnim]}
+    >
       <Press onPress={() => router.push('/search')} scaleTo={0.9} style={[s.searchCircle, shadow.nav, surface]}>
         <LIcon name="search" size={21} color={c.ink} strokeWidth={2} />
       </Press>
@@ -57,20 +73,19 @@ export function GlassNavbar({ state, navigation }: TabBarProps) {
           const meta = TABS[route.name] ?? TABS.index;
           const focused = state.index === i;
           return (
-            <APressable
+            <TabButton
               key={route.key}
-              layout={TAB_MORPH}
-              accessibilityRole="button"
-              accessibilityState={focused ? { selected: true } : {}}
+              focused={focused}
+              icon={meta.icon}
+              label={meta.label}
+              brand={c.brand}
+              idle={c.inkFaint}
               onPress={() => {
                 tick();
                 const event = navigation.emit({ type: 'tabPress', target: route.key, canPreventDefault: true });
                 if (!focused && !event.defaultPrevented) navigation.navigate(route.name);
               }}
-              style={[s.tab, focused ? [s.tabActive, { backgroundColor: c.brand }] : null]}
-            >
-              <TabItem icon={meta.icon} label={meta.label} focused={focused} />
-            </APressable>
+            />
           );
         })}
       </View>
@@ -78,39 +93,72 @@ export function GlassNavbar({ state, navigation }: TabBarProps) {
   );
 }
 
-function TabItem({ icon, label, focused }: { icon: string; label: string; focused: boolean }) {
-  const { c } = useTheme();
-  const v = useSharedValue(focused ? 1 : 0);
+function TabButton({
+  focused,
+  icon,
+  label,
+  brand,
+  idle,
+  onPress,
+}: {
+  focused: boolean;
+  icon: string;
+  label: string;
+  brand: string;
+  idle: string;
+  onPress: () => void;
+}) {
+  // Each tab owns its own 0..1 focus progress. Deriving all three from one
+  // index in the parent looked tidier but left the styles stale — this is the
+  // shape that actually tracks, and it is also more forgiving: flexGrow is a
+  // ratio, so the row fills the pill exactly whatever the three values happen
+  // to be mid-transition. Nothing has to sum to anything.
+  const p = useSharedValue(focused ? 1 : 0);
   useEffect(() => {
-    v.value = withSpring(focused ? 1 : 0, spring.snappy);
-  }, [focused, v]);
+    p.value = withSpring(focused ? 1 : 0, spring.snappy);
+  }, [focused, p]);
+
+  const growStyle = useAnimatedStyle(() => ({
+    flexGrow: 1 + (ACTIVE_SHARE - 1) * p.value,
+  }));
+
+  const bgStyle = useAnimatedStyle(() => ({ opacity: p.value }));
 
   const iconStyle = useAnimatedStyle(() => ({
-    transform: [{ scale: 1 + v.value * 0.03 }],
+    transform: [{ scale: 1 + p.value * 0.03 }],
   }));
+
   const labelStyle = useAnimatedStyle(() => ({
-    opacity: v.value,
-    maxWidth: interpolate(v.value, [0, 1], [0, 88]),
-    transform: [{ translateX: interpolate(v.value, [0, 1], [-3, 0]) }],
+    opacity: p.value,
+    maxWidth: interpolate(p.value, [0, 1], [0, 88]),
+    transform: [{ translateX: interpolate(p.value, [0, 1], [-3, 0]) }],
   }));
 
   return (
-    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-      <Animated.View style={iconStyle}>
-        <LIcon
-          name={icon}
-          size={20}
-          color={focused ? '#fff' : c.inkFaint}
-          strokeWidth={focused ? 2.4 : 1.9}
-          fill={focused ? '#fff' : 'none'}
-        />
-      </Animated.View>
-      <Animated.View style={[labelStyle, { overflow: 'hidden' }]}>
-        <Txt size={13.5} weight="bold" color="#fff" numberOfLines={1}>
-          {label}
-        </Txt>
-      </Animated.View>
-    </View>
+    <APressable
+      accessibilityRole="button"
+      accessibilityState={focused ? { selected: true } : {}}
+      onPress={onPress}
+      style={[s.tab, growStyle]}
+    >
+      <Animated.View style={[s.tabBg, { backgroundColor: brand }, shadow.tab, bgStyle]} />
+      <View style={s.tabRow}>
+        <Animated.View style={iconStyle}>
+          <LIcon
+            name={icon}
+            size={20}
+            color={focused ? '#fff' : idle}
+            strokeWidth={focused ? 2.4 : 1.9}
+            fill={focused ? '#fff' : 'none'}
+          />
+        </Animated.View>
+        <Animated.View style={[labelStyle, { overflow: 'hidden' }]}>
+          <Txt size={13.5} weight="bold" color="#fff" numberOfLines={1}>
+            {label}
+          </Txt>
+        </Animated.View>
+      </View>
+    </APressable>
   );
 }
 
@@ -138,19 +186,25 @@ const s = StyleSheet.create({
     borderRadius: 999,
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 8,
+    paddingHorizontal: PILL_PAD,
   },
   tab: {
-    flexGrow: 1,
+    // flexGrow comes from the animated style; basis 0 makes it a pure ratio
     flexShrink: 1,
     flexBasis: 0,
     height: BAR_HEIGHT - 12,
     borderRadius: 999,
     alignItems: 'center',
     justifyContent: 'center',
+    overflow: 'hidden',
   },
-  tabActive: {
-    flexGrow: 1.9,
-    boxShadow: '0 6px 18px rgba(57,121,255,0.4)',
+  tabBg: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    borderRadius: 999,
   },
+  tabRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
 });
