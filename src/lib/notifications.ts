@@ -29,6 +29,34 @@ try {
 
 const LAST_SEEN_KEY = 'dailymattr.breaking.lastseen.v1';
 const LAST_NOTIFIED_KEY = 'dailymattr.breaking.lastnotified.v1';
+const ENABLED_KEY = 'dailymattr.notify.v1';
+
+/* An in-app off switch for breaking alerts.
+
+   Until now the only way to stop them was to revoke the OS permission, which
+   is a blunt instrument: it also kills the notification the reader might
+   actually want later, and there was nothing in the app to say the setting
+   existed. Same shape as lib/haptics.ts — a module-level flag readable
+   synchronously, hydrated in the background — because checkBreaking runs at
+   boot and must not wait on storage to decide whether to stay quiet.
+
+   Defaults to on: a news app that never tells you about breaking news is not
+   what anyone installed. */
+let notifyEnabled = true;
+AsyncStorage.getItem(ENABLED_KEY)
+  .then((v) => {
+    if (v === 'off') notifyEnabled = false;
+  })
+  .catch(() => {});
+
+export function getNotifyEnabled(): boolean {
+  return notifyEnabled;
+}
+
+export function setNotifyEnabled(v: boolean): void {
+  notifyEnabled = v;
+  AsyncStorage.setItem(ENABLED_KEY, v ? 'on' : 'off').catch(() => {});
+}
 
 export async function ensurePermissions(): Promise<boolean> {
   if (!N) return false;
@@ -93,8 +121,10 @@ export async function checkBreaking(): Promise<{ items: BreakingItem[]; unread: 
 
   const fresh = items.filter((b) => new Date(b.detectedAt).getTime() > lastNotified);
   if (fresh.length > 0) {
+    // The watermark advances whether or not a notification is sent, so turning
+    // alerts back on does not immediately fire one for a story from last week.
     await AsyncStorage.setItem(LAST_NOTIFIED_KEY, String(Date.now()));
-    if (N && (await ensurePermissions())) {
+    if (notifyEnabled && N && (await ensurePermissions())) {
       try {
         await N.scheduleNotificationAsync({
           content: {
