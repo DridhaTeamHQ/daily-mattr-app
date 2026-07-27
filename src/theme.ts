@@ -120,16 +120,51 @@ export const shadow = {
   lift: { boxShadow: '0 16px 44px rgba(10,20,40,0.12)' },
   hero: { boxShadow: '0 24px 60px rgba(10,20,40,0.18)' },
   nav: { boxShadow: '0 12px 36px rgba(10,27,61,0.16), 0 2px 8px rgba(10,27,61,0.08)' },
+  tab: { boxShadow: '0 6px 18px rgba(57,121,255,0.4)' },
   glowBrand: { boxShadow: '0 10px 40px rgba(57,121,255,0.25)' },
 } as const;
 
 // Critically damped springs — fast settle, no visible oscillation.
-// `playful` is reserved for rare celebratory moments (heart burst) only.
+// `bouncy` is reserved for rare celebratory moments (heart burst) only.
 export const spring = {
   snappy: { damping: 30, stiffness: 280, mass: 0.8 },
   gentle: { damping: 26, stiffness: 170, mass: 0.9 },
   bouncy: { damping: 16, stiffness: 230, mass: 0.7 },
 } as const;
+
+/* Durations, as a scale rather than a number picked per call site.
+
+   Entrances were written independently over time and drifted: 180, 200, 220,
+   240, 260, 300, 320, 350, 400, 450, 500ms all appear, several of them on
+   things that sit next to each other. The eye reads that as sloppiness even
+   when it cannot name why — two panels opening beside each other at 220 and
+   320 look like one of them is lagging.
+
+   Four steps, chosen by how far the thing has to travel:
+
+     instant  a state flip in place — a chip lighting, a colour change
+     quick    something small arriving — a row, a chip, a badge
+     base     the default for a panel or a card
+     slow     a full screen taking over
+
+   Stagger is the delay *between* siblings, not a duration. 40ms is about the
+   shortest gap that still reads as a sequence rather than a single event. */
+export const duration = {
+  instant: 140,
+  quick: 200,
+  base: 280,
+  slow: 420,
+} as const;
+
+export const stagger = { tight: 40, loose: 60 } as const;
+
+/** Longest a staggered list should take before the last item lands. */
+export const STAGGER_CAP = 5;
+
+/* Android's blur stops improving somewhere around here and only gets more
+   expensive; every distinct radius also produces its own cached bitmap. One
+   ceiling, so no call site quietly asks for 40 again. */
+export const BLUR_MAX = 22;
 
 /* Eased scrims — 6 stops approximating a cubic ease so photo overlays
    never band. Use with expo-linear-gradient. */
