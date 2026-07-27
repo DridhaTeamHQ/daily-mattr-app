@@ -23,6 +23,7 @@ import { pixStyleFor, HEADLINE_SIZE, type PixStyle } from '@/lib/pixStyles';
 import { pixPoints } from '@/lib/feed';
 import { tick, soft, save as saveHaptic } from '@/lib/haptics';
 import { enterChrome } from '@/lib/transitions';
+import { ImagePeek } from './imagePeek';
 
 const GUTTER = 24;
 
@@ -360,6 +361,8 @@ function SlideOne({
 
   return (
     <View style={{ width: W, height: H }}>
+      {/* hold the photograph to see the whole frame, uncropped */}
+      <ImagePeek source={src} caption={a.title}>
       <View style={{ height: photoH, overflow: 'hidden' }}>
         <Image source={src} style={StyleSheet.absoluteFill} contentFit="cover" recyclingKey={a.id} transition={260} />
         {style.scrim === 'duotone' ? (
@@ -373,6 +376,7 @@ function SlideOne({
           <EasedScrim variant="top" style={{ position: 'absolute', left: 0, right: 0, top: 0, height: Math.round(photoH * 0.5) }} />
         ) : null}
       </View>
+      </ImagePeek>
 
       <View
         style={[

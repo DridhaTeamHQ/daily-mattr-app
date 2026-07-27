@@ -21,6 +21,7 @@ import Animated, {
 import { colors, radius, shadow, spring, topicOf, BLUR_MAX } from '@/theme';
 import { Txt, Press, BreakingBadge, EasedScrim, LIcon } from './ui';
 import { CommentsPanel } from './commentsPanel';
+import { ImagePeek } from './imagePeek';
 import { SpokenText } from './spokenText';
 import {
   toggleSpeech,
@@ -225,7 +226,15 @@ function ReaderCard({
   return (
     <GestureDetector gesture={modeSwipe}>
       <Animated.View style={{ height, backgroundColor: c.bg, overflow: 'hidden' }}>
-    <Pressable onPress={() => nav.toggle()} style={{ flex: 1 }}>
+    <Pressable
+      onPress={() => nav.toggle()}
+      // Providing onLongPress is what stops RN firing onPress when the finger
+      // is held — otherwise peeking the image would also toggle the navbar on
+      // release.
+      onLongPress={() => {}}
+      delayLongPress={230}
+      style={{ flex: 1 }}
+    >
       <Image
         source={imgSource}
         style={StyleSheet.absoluteFill}
@@ -269,6 +278,16 @@ function ReaderCard({
           {sharpLayers}
         </MaskedView>
       )}
+
+      {/* Hold the photograph to see the whole frame. A transparent target
+          rather than a wrapper: the image above is absolutely positioned
+          inside a mask, and wrapping it would make this view its containing
+          block and collapse the layout. */}
+      <ImagePeek
+        source={imgSource}
+        caption={a.title}
+        style={{ position: 'absolute', top: 0, left: 0, right: 0, height: imgH }}
+      />
 
       {/* Marks where the deck crosses into an older band. Only on the first
           card of each run — every card already carries timeAgo, so labelling
