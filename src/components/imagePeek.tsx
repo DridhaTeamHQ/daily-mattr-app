@@ -33,6 +33,7 @@ export function ImagePeek({
   source,
   caption,
   style,
+  held,
   children,
 }: {
   source: ImageSource | number;
@@ -42,9 +43,20 @@ export function ImagePeek({
       card's image lives inside a mask, so it gets a transparent hit area laid
       over the image instead. */
   style?: ViewStyle;
+  /* Controlled mode.
+
+     Where the photo already sits inside a Pressable, that Pressable's own
+     long-press detector claims the gesture and this component's would never
+     activate — two recognisers cannot both win the same hold. So the host
+     drives it: onLongPress sets this true, onPressOut sets it false, and the
+     internal gesture stands down. */
+  held?: boolean;
   children?: React.ReactNode;
 }) {
-  const [open, setOpen] = useState(false);
+  const controlled = held !== undefined;
+  const [selfOpen, setSelfOpen] = useState(false);
+  const open = controlled ? held : selfOpen;
+  const setOpen = setSelfOpen;
   const { width: winW, height: winH } = useWindowDimensions();
   const animate = useMotionAllowed();
 
@@ -52,6 +64,11 @@ export function ImagePeek({
   const p = useSharedValue(0);
 
   const close = useCallback(() => {
+    if (controlled) {
+      // the host owns `held`; just run the exit
+      p.value = animate ? withTiming(0, { duration: duration.quick, easing: Easing.in(Easing.cubic) }) : 0;
+      return;
+    }
     if (!animate) {
       p.value = 0;
       setOpen(false);
@@ -63,11 +80,13 @@ export function ImagePeek({
   }, [animate, p]);
 
   useEffect(() => {
-    if (!open) return;
-    p.value = animate
-      ? withSpring(1, spring.snappy)
-      : 1;
-  }, [open, animate, p]);
+    if (open) {
+      if (controlled) soft();
+      p.value = animate ? withSpring(1, spring.snappy) : 1;
+    } else if (controlled) {
+      p.value = animate ? withTiming(0, { duration: duration.quick, easing: Easing.in(Easing.cubic) }) : 0;
+    }
+  }, [open, animate, controlled, p]);
 
   const peek = React.useMemo(
     () =>
@@ -102,9 +121,13 @@ export function ImagePeek({
 
   return (
     <>
-      <GestureDetector gesture={peek}>
-        <View style={style}>{children}</View>
-      </GestureDetector>
+      {controlled ? (
+        style || children ? <View style={style}>{children}</View> : null
+      ) : (
+        <GestureDetector gesture={peek}>
+          <View style={style}>{children}</View>
+        </GestureDetector>
+      )}
 
       <Modal
         visible={open}

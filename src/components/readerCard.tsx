@@ -148,6 +148,7 @@ function ReaderCard({
   const [burst, setBurst] = useState(0);
   const [saveRing, setSaveRing] = useState(0);
   const [showComments, setShowComments] = useState(false);
+  const [peeking, setPeeking] = useState(false);
   // latches once comments have been opened on this card — see the summary's
   // entering prop below
   const [usedComments, setUsedComments] = useState(false);
@@ -228,11 +229,12 @@ function ReaderCard({
       <Animated.View style={{ height, backgroundColor: c.bg, overflow: 'hidden' }}>
     <Pressable
       onPress={() => nav.toggle()}
-      // Providing onLongPress is what stops RN firing onPress when the finger
-      // is held — otherwise peeking the image would also toggle the navbar on
-      // release.
-      onLongPress={() => {}}
-      delayLongPress={230}
+      // Handling the hold here does double duty: it lifts the photo, and it
+      // stops RN firing onPress on release, so peeking never also toggles the
+      // navbar.
+      onLongPress={() => setPeeking(true)}
+      onPressOut={() => setPeeking(false)}
+      delayLongPress={240}
       style={{ flex: 1 }}
     >
       <Image
@@ -279,15 +281,11 @@ function ReaderCard({
         </MaskedView>
       )}
 
-      {/* Hold the photograph to see the whole frame. A transparent target
-          rather than a wrapper: the image above is absolutely positioned
-          inside a mask, and wrapping it would make this view its containing
-          block and collapse the layout. */}
-      <ImagePeek
-        source={imgSource}
-        caption={a.title}
-        style={{ position: 'absolute', top: 0, left: 0, right: 0, height: imgH }}
-      />
+      {/* Hold the photograph to see the whole frame. Driven by the card's own
+          Pressable below rather than its own recogniser: this image sits inside
+          that Pressable, and RN's long-press detector would win the hold, so a
+          second recogniser here simply never fired. */}
+      <ImagePeek source={imgSource} caption={a.title} held={peeking} />
 
       {/* Marks where the deck crosses into an older band. Only on the first
           card of each run — every card already carries timeAgo, so labelling

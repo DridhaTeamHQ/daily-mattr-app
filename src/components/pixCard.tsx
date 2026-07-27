@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { View, StyleSheet, Share, ScrollView, useWindowDimensions } from 'react-native';
+import { View, StyleSheet, Share, ScrollView, Pressable, useWindowDimensions } from 'react-native';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
@@ -61,6 +61,7 @@ export function PixCard({
 
   const [page, setPage] = useState(0);
   const [showComments, setShowComments] = useState(false);
+  const [peeking, setPeeking] = useState(false);
 
   const style = useMemo(() => pixStyleFor(a.id), [a.id]);
   const runs = useMemo(() => highlightRuns(a.title), [a.title]);
@@ -116,7 +117,18 @@ export function PixCard({
           decelerationRate="fast"
           style={{ flex: 1 }}
         >
-          <SlideOne a={a} style={style} runs={runs} W={W} H={H} topicGrad={t.grad} wash={t.wash} onPage={onPage} />
+          <SlideOne
+            a={a}
+            style={style}
+            runs={runs}
+            W={W}
+            H={H}
+            topicGrad={t.grad}
+            wash={t.wash}
+            onPage={onPage}
+            peeking={peeking}
+            setPeeking={setPeeking}
+          />
           <SlideTwo a={a} style={style} bullets={bullets} W={W} H={H} wash={t.wash} />
         </ScrollView>
 
@@ -326,6 +338,8 @@ function SlideOne({
   topicGrad,
   wash,
   onPage,
+  peeking,
+  setPeeking,
 }: {
   a: Article;
   style: PixStyle;
@@ -335,6 +349,8 @@ function SlideOne({
   topicGrad: [string, string];
   wash: string;
   onPage?: boolean;
+  peeking: boolean;
+  setPeeking: (v: boolean) => void;
 }) {
   const { c } = useTheme();
   const src = a.imageUrl ? { uri: a.imageUrl } : artFor(a.topic);
@@ -361,9 +377,16 @@ function SlideOne({
 
   return (
     <View style={{ width: W, height: H }}>
-      {/* hold the photograph to see the whole frame, uncropped */}
-      <ImagePeek source={src} caption={a.title}>
-      <View style={{ height: photoH, overflow: 'hidden' }}>
+      {/* hold the photograph to see the whole frame, uncropped. Pressable
+          rather than a gesture recogniser, so all three surfaces detect the
+          hold the same way — see the note in imagePeek.tsx. */}
+      <ImagePeek source={src} caption={a.title} held={peeking} />
+      <Pressable
+        onLongPress={() => setPeeking(true)}
+        onPressOut={() => setPeeking(false)}
+        delayLongPress={240}
+        style={{ height: photoH, overflow: 'hidden' }}
+      >
         <Image source={src} style={StyleSheet.absoluteFill} contentFit="cover" recyclingKey={a.id} transition={260} />
         {style.scrim === 'duotone' ? (
           <LinearGradient colors={[topicGrad[0] + 'cc', topicGrad[1] + 'e6']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={StyleSheet.absoluteFill} />
@@ -375,8 +398,7 @@ function SlideOne({
         {style.anchor === 'top' ? (
           <EasedScrim variant="top" style={{ position: 'absolute', left: 0, right: 0, top: 0, height: Math.round(photoH * 0.5) }} />
         ) : null}
-      </View>
-      </ImagePeek>
+      </Pressable>
 
       <View
         style={[

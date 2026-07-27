@@ -1,5 +1,5 @@
-import React, { useEffect, useMemo, useRef } from 'react';
-import { View, StyleSheet, Share, Dimensions } from 'react-native';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { View, StyleSheet, Share, Dimensions, Pressable } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useQuery } from '@tanstack/react-query';
@@ -46,6 +46,7 @@ export default function ArticleScreen() {
   const insets = useSafeAreaInsets();
   const { recordRead, isSaved, toggleSaved, isLiked, toggleLiked } = useStore();
   const speaking = useIsSpeaking(id);
+  const [peeking, setPeeking] = useState(false);
   const readCompleteSent = useRef(false);
 
   const scrollY = useSharedValue(0);
@@ -177,11 +178,25 @@ export default function ArticleScreen() {
       </View>
 
       <Animated.ScrollView onScroll={onScroll} scrollEventThrottle={16} showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 44 }}>
-        {/* parallax + mount-zoom hero. Holding it lifts the whole frame —
-            the hero is cropped hard to 400pt and scaled on mount, so what is
-            on screen is a long way from the photograph as filed. */}
-        <ImagePeek source={a.imageUrl ? { uri: a.imageUrl } : artFor(a.topic)} caption={a.title}>
-        <View style={{ height: HERO_H, overflow: 'hidden' }}>
+        {/* parallax + mount-zoom hero. Holding it lifts the whole frame — the
+            hero is cropped hard to 400pt and scaled on mount, so what is on
+            screen is a long way from the photograph as filed.
+
+            The hold is detected by a Pressable rather than a gesture
+            recogniser. Same reason as the reader card: this is the mechanism
+            that reliably wins a long press inside a scroll view, so all three
+            surfaces now use it and behave identically. */}
+        <ImagePeek
+          source={a.imageUrl ? { uri: a.imageUrl } : artFor(a.topic)}
+          caption={a.title}
+          held={peeking}
+        />
+        <Pressable
+          onLongPress={() => setPeeking(true)}
+          onPressOut={() => setPeeking(false)}
+          delayLongPress={240}
+          style={{ height: HERO_H, overflow: 'hidden' }}
+        >
           <Animated.View style={[StyleSheet.absoluteFill, heroStyle]}>
             {a.imageUrl ? (
               <>
@@ -194,8 +209,7 @@ export default function ArticleScreen() {
           </Animated.View>
           <EasedScrim variant="top" style={{ position: 'absolute', left: 0, right: 0, top: 0, height: HERO_H * 0.45 }} />
           <EasedScrim variant="toWhite" style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: HERO_H * 0.5 }} />
-        </View>
-        </ImagePeek>
+        </Pressable>
 
         {/* headline block */}
         <Animated.View entering={enterContent()} style={{ paddingHorizontal: 24, marginTop: -92 }}>
