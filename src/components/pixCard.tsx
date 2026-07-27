@@ -1,44 +1,78 @@
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { View, StyleSheet, Share, ScrollView, useWindowDimensions } from 'react-native';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
-import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
-import { radius, topicOf } from '@/theme';
+import Animated, {
+  Easing,
+  useAnimatedStyle,
+  useSharedValue,
+  withSequence,
+  withTiming,
+} from 'react-native-reanimated';
+import { radius, topicOf, BLUR_MAX } from '@/theme';
 import { useTheme } from '@/lib/theme';
 import { Txt, Press, LIcon, EasedScrim, BreakingBadge } from './ui';
 import { CommentsPanel } from './commentsPanel';
 import { type Article, timeAgo, isBreaking } from '@/lib/content';
-import { useStore } from '@/lib/store';
+import { useIsSaved, useIsLiked, useIsDisliked, storeActions } from '@/lib/store';
 import { track, trackImpression } from '@/lib/telemetry';
 import { artFor } from '@/lib/topicArt';
 import { highlightRuns } from '@/lib/highlight';
 import { pixStyleFor, HEADLINE_SIZE, type PixStyle } from '@/lib/pixStyles';
+import { pixPoints } from '@/lib/feed';
+import { tick, soft, save as saveHaptic } from '@/lib/haptics';
+import { enterChrome } from '@/lib/transitions';
 
 const GUTTER = 24;
 
 /* A story told as two slides: the photo carrying the headline, then the same
    photo standing back so the three key points can be read. The look is drawn
    from a preset chosen by article id, so the feed varies without the layout
-   logic multiplying. */
-export function PixCard({ a, index = 0 }: { a: Article; index?: number }) {
+   logic multiplying.
+
+   Two placements. In a list it is a card among rows, so it keeps its gutters
+   and its own entrance. On a page of its own — the Pix slot in the mixed
+   reader deck — it is the whole subject, so the footer flips to light type and
+   the card sits on the ambient backdrop the page provides (see PixPage in
+   app/(tabs)/reader.tsx). The old version sat on the raw canvas, which meant a
+   dark object stranded in the middle of a blank white sheet. */
+export function PixCard({
+  a,
+  index = 0,
+  variant = 'list',
+  height,
+  commentCount = 0,
+}: {
+  a: Article;
+  index?: number;
+  variant?: 'list' | 'page';
+  /** overrides the card height; the page placement has a whole screen to fill */
+  height?: number;
+  commentCount?: number;
+}) {
   const { c, isDark } = useTheme();
   const router = useRouter();
   const { width: winW } = useWindowDimensions();
-  const { isSaved, toggleSaved, isLiked, toggleLiked, isDisliked, toggleDisliked } = useStore();
+  // per-card boolean subscriptions rather than the whole store — same reason
+  // as ReaderCard; a Pix deck keeps several of these mounted at once
+  const { toggleSaved, toggleLiked, toggleDisliked } = storeActions();
 
   const [page, setPage] = useState(0);
   const [showComments, setShowComments] = useState(false);
 
   const style = useMemo(() => pixStyleFor(a.id), [a.id]);
   const runs = useMemo(() => highlightRuns(a.title), [a.title]);
-  const bullets = useMemo(() => (a.modes?.tldr ?? []).slice(0, 3), [a.modes]);
+  // the same function the feed's Pix gate uses, so a story promoted into a
+  // Pix slot always has something to put on the second slide
+  const bullets = useMemo(() => pixPoints(a), [a]);
   const t = topicOf(a.topic);
+  const onPage = variant === 'page';
 
   React.useEffect(() => trackImpression(a.id, a.topic), [a.id, a.topic]);
 
   const W = winW - GUTTER * 2;
-  const H = Math.round(Math.min(winW * 1.28, 520));
+  const H = height ?? Math.round(Math.min(winW * 1.28, 520));
 
   const onScroll = useCallback(
     (e: any) => {
@@ -48,16 +82,25 @@ export function PixCard({ a, index = 0 }: { a: Article; index?: number }) {
     [W, page],
   );
 
-  const liked = isLiked(a.id);
-  const disliked = isDisliked(a.id);
-  const saved = isSaved(a.id);
+  const liked = useIsLiked(a.id);
+  const disliked = useIsDisliked(a.id);
+  const saved = useIsSaved(a.id);
 
   return (
-    <Animated.View
-      entering={FadeInDown.delay(Math.min(index, 4) * 60).springify().damping(30).stiffness(250).mass(0.9)}
-      style={{ marginBottom: 26 }}
-    >
-      <View style={[s.card, { width: W, height: H, marginHorizontal: GUTTER, backgroundColor: isDark ? '#0C111D' : '#0E1524' }]}>
+    /* No entering animation, in either placement.
+
+       Both the Home feed and the reader deck are virtualized, so this card
+       mounts when it is paged in — mid-scroll — not at first paint. A card
+       that slides up as you scroll past it is movement the finger did not
+       ask for. See the note on ArticleRow in components/cards.tsx. */
+    <Animated.View style={{ marginBottom: onPage ? 0 : 26 }}>
+      <View
+        style={[
+          s.card,
+          { width: W, height: H, marginHorizontal: GUTTER, backgroundColor: isDark ? '#0C111D' : '#0E1524' },
+          onPage ? s.lift : null,
+        ]}
+      >
         <ScrollView
           horizontal
           pagingEnabled
@@ -105,31 +148,52 @@ export function PixCard({ a, index = 0 }: { a: Article; index?: number }) {
         <View style={s.actions}>
           <PixAction
             icon="thumbs-up"
+            label="Like"
             active={liked}
             activeColor={c.brand}
-            onPress={() => toggleLiked(a.id, a.topic)}
+            onPress={() => {
+              soft();
+              toggleLiked(a.id, a.topic);
+            }}
           />
           <PixAction
             icon="thumbs-down"
+            label="Dislike"
             active={disliked}
-            activeColor="#FF6B6B"
-            onPress={() => toggleDisliked(a.id, a.topic)}
+            activeColor="#FF9F45"
+            onPress={() => {
+              soft();
+              toggleDisliked(a.id, a.topic);
+            }}
           />
           <PixAction
             icon="message-circle"
+            label={commentCount > 0 ? `Comments, ${commentCount}` : 'Comment'}
+            badge={commentCount}
+            badgeColor={c.brand}
             active={showComments}
             activeColor={c.brand}
-            onPress={() => setShowComments((v) => !v)}
+            onPress={() => {
+              tick();
+              setShowComments((v) => !v);
+            }}
           />
           <PixAction
             icon="bookmark"
+            label="Save"
             active={saved}
             activeColor={c.brand}
-            onPress={() => toggleSaved(a.id, a.topic)}
+            onPress={() => {
+              if (saved) tick();
+              else saveHaptic();
+              toggleSaved(a.id, a.topic);
+            }}
           />
           <PixAction
             icon="share-2"
+            label="Share"
             onPress={() => {
+              tick();
               track({ article_id: a.id, event_type: 'share', topic: a.topic });
               Share.share({ message: `${a.title}\n\n${a.url}` });
             }}
@@ -138,45 +202,103 @@ export function PixCard({ a, index = 0 }: { a: Article; index?: number }) {
 
         {/* comments take the whole card rather than squeezing into a slide */}
         {showComments ? (
-          <Animated.View entering={FadeIn.duration(200)} style={[StyleSheet.absoluteFill, s.commentsWrap, { backgroundColor: isDark ? 'rgba(10,14,23,0.97)' : 'rgba(255,255,255,0.97)' }]}>
+          <Animated.View entering={enterChrome()} style={[StyleSheet.absoluteFill, s.commentsWrap, { backgroundColor: isDark ? 'rgba(10,14,23,0.97)' : 'rgba(255,255,255,0.97)' }]}>
             <CommentsPanel articleId={a.id} onClose={() => setShowComments(false)} />
           </Animated.View>
         ) : null}
       </View>
 
       <Press
-        onPress={() => router.push(`/article/${a.id}`)}
+        haptic={false}
+        onPress={() => {
+          tick();
+          track({ article_id: a.id, event_type: 'open_full', topic: a.topic });
+          router.push(`/article/${a.id}`);
+        }}
         scaleTo={0.97}
-        style={{ marginHorizontal: GUTTER, marginTop: 10, alignSelf: 'flex-start' }}
+        accessibilityRole="button"
+        accessibilityLabel={`Read the full story from ${a.publisher}`}
+        style={[s.footer, { marginHorizontal: GUTTER }]}
       >
-        <Txt size={12.5} weight="semibold" color={c.inkSoft}>
+        <Txt size={12.5} weight="semibold" color={onPage ? 'rgba(255,255,255,0.92)' : c.inkSoft}>
           {a.publisher} · Read full story
         </Txt>
+        <LIcon
+          name="chevron-right"
+          size={14}
+          color={onPage ? 'rgba(255,255,255,0.92)' : c.inkSoft}
+          strokeWidth={2.4}
+        />
       </Press>
     </Animated.View>
   );
 }
 
+/* Glass circle with a hairline ring, and a pop when it lights.
+
+   No visible labels here, unlike the reel's rail. This row sits inside a
+   composed photo layout with a headline and page dots already competing for
+   the lower third, and five captions would turn a designed slide into a
+   toolbar. The label is the accessibility name instead.
+
+   The pop is what makes the tap feel like it did something — a fill colour
+   appearing with no motion reads as a repaint rather than a response. */
 function PixAction({
   icon,
+  label,
   active,
   activeColor,
+  badge = 0,
+  badgeColor,
   onPress,
 }: {
   icon: string;
+  /** accessibility name; not drawn */
+  label: string;
   active?: boolean;
   activeColor?: string;
+  /** drawn as a count chip when > 0 */
+  badge?: number;
+  badgeColor?: string;
   onPress: () => void;
 }) {
+  const pop = useSharedValue(0);
+  useEffect(() => {
+    if (!active) return;
+    pop.value = withSequence(
+      withTiming(1, { duration: 130, easing: Easing.out(Easing.quad) }),
+      withTiming(0, { duration: 240, easing: Easing.out(Easing.cubic) }),
+    );
+  }, [active, pop]);
+  const popStyle = useAnimatedStyle(() => ({ transform: [{ scale: 1 + pop.value * 0.3 }] }));
+
+  const lit = !!(active && activeColor);
   return (
-    <Press haptic hitSlop={8} onPress={onPress} scaleTo={0.86} style={s.action}>
-      <LIcon
-        name={icon}
-        size={17}
-        color={active && activeColor ? activeColor : 'rgba(255,255,255,0.92)'}
-        fill={active && activeColor ? activeColor : 'none'}
-        strokeWidth={2}
-      />
+    <Press
+      haptic={false}
+      hitSlop={6}
+      onPress={onPress}
+      scaleTo={0.86}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      accessibilityState={{ selected: !!active }}
+    >
+      <Animated.View
+        style={[
+          s.action,
+          lit ? { backgroundColor: activeColor, borderColor: activeColor } : null,
+          popStyle,
+        ]}
+      >
+        <LIcon name={icon} size={17} color="#fff" fill={lit ? '#fff' : 'none'} strokeWidth={2} />
+      </Animated.View>
+      {badge > 0 ? (
+        <View style={[s.badge, { backgroundColor: badgeColor }]}>
+          <Txt size={9.5} weight="bold" color="#fff">
+            {badge > 99 ? '99+' : badge}
+          </Txt>
+        </View>
+      ) : null}
     </Press>
   );
 }
@@ -311,7 +433,10 @@ function SlideTwo({
             source={src}
             style={StyleSheet.absoluteFill}
             contentFit="cover"
-            blurRadius={style.back === 'dim' ? 40 : 12}
+            // 40 was past the point where Android's blur stops improving and
+            // only gets more expensive — each radius produces its own
+            // full-size bitmap, on top of the sharp copy slide one holds
+            blurRadius={style.back === 'dim' ? BLUR_MAX : 12}
             recyclingKey={a.id + '-b'}
             transition={200}
           />
@@ -328,7 +453,11 @@ function SlideTwo({
 
       <View style={[s.points, style.back === 'band' ? { paddingTop: 14 } : null]}>
         {bullets.map((b, i) => (
-          <Animated.View key={i} entering={FadeInDown.delay(i * 70).duration(320)} style={s.point}>
+          /* These used to stagger in. They never actually played — the card
+             mounts while slide one is showing, so by the time you swipe here
+             the animation has long finished, and the only thing it cost was
+             three more animated nodes per card in a virtualized deck. */
+          <View key={i} style={s.point}>
             {style.marker === 'numeral' ? (
               <Txt display size={12} weight="extrabold" color={c.brandLight} style={{ width: 22, marginTop: 2 }}>
                 {String(i + 1).padStart(2, '0')}
@@ -338,10 +467,14 @@ function SlideTwo({
             ) : (
               <View style={[s.dotMark, { backgroundColor: c.brand }]} />
             )}
-            <Txt size={14} lh={21} color="rgba(255,255,255,0.94)" style={{ flex: 1 }}>
+            {/* A tl;dr bullet is one short line; a sentence lifted from the
+                summary can run long, and three long ones would push past the
+                slide. Clipping is the honest failure here — the headline on
+                slide one already carries the story. */}
+            <Txt size={14} lh={21} color="rgba(255,255,255,0.94)" style={{ flex: 1 }} numberOfLines={5}>
               {b}
             </Txt>
-          </Animated.View>
+          </View>
         ))}
       </View>
     </View>
@@ -353,6 +486,10 @@ const s = StyleSheet.create({
     borderRadius: radius.lg,
     overflow: 'hidden',
   },
+  // only on a page of its own, where the card has to read as an object sitting
+  // on the backdrop rather than a hole cut into it
+  lift: { boxShadow: '0 20px 48px rgba(0,0,0,0.45)' },
+  footer: { flexDirection: 'row', alignItems: 'center', gap: 3, marginTop: 12, alignSelf: 'flex-start' },
   top: {
     position: 'absolute',
     top: 14,
@@ -402,7 +539,7 @@ const s = StyleSheet.create({
     right: 0,
     flexDirection: 'row',
     justifyContent: 'center',
-    gap: 6,
+    gap: 8,
   },
   action: {
     width: 40,
@@ -411,6 +548,21 @@ const s = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: 'rgba(11,13,18,0.44)',
+    // the ring is what stops five dark circles reading as smudges on a dark
+    // photograph — it catches the image behind and gives each one an edge
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(255,255,255,0.26)',
+  },
+  badge: {
+    position: 'absolute',
+    top: -3,
+    right: -4,
+    minWidth: 17,
+    height: 17,
+    borderRadius: 9,
+    paddingHorizontal: 4,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   commentsWrap: { padding: 16, borderRadius: radius.lg },
 });
