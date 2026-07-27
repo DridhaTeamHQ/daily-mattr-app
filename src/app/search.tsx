@@ -5,12 +5,13 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { useQuery } from '@tanstack/react-query';
 
-import Animated, { FadeInDown, FadeIn } from 'react-native-reanimated';
+import Animated from 'react-native-reanimated';
 import { colors, font, radius, topicOf } from '@/theme';
 import { useTheme } from '@/lib/theme';
 import { Txt, Press, IconButton, LIcon } from '@/components/ui';
 import { ArticleRow } from '@/components/cards';
 import { searchSemantic, fetchTrending } from '@/lib/queries';
+import { enterItem, enterChrome } from '@/lib/transitions';
 
 const SUGGESTIONS = ['AI', 'Elections', 'Markets', 'Startups', 'Cricket', 'Space', 'EV'];
 const RECENT_KEY = 'dailymattr.recent.v1';
@@ -70,9 +71,9 @@ export default function Search() {
 
   return (
     <View style={{ flex: 1, backgroundColor: c.bg, paddingTop: insets.top + 8 }}>
-      <Animated.View entering={FadeIn.duration(300)} style={s.bar}>
+      <Animated.View entering={enterChrome()} style={s.bar}>
         <IconButton name="chevron-left" onPress={() => router.back()} />
-        <View style={[s.inputWrap, { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : '#EEF1F6' }]}>
+        <View style={[s.inputWrap, { backgroundColor: c.bgSoft }]}>
           <LIcon name="search" size={17} color={c.inkFaint} />
           <TextInput
             autoFocus
@@ -109,7 +110,7 @@ export default function Search() {
                   </Press>
                 </View>
                 {recent.map((r, i) => (
-                  <Animated.View key={r} entering={FadeInDown.delay(i * 40)}>
+                  <Animated.View key={r} entering={enterItem(i)}>
                     <Press onPress={() => setText(r)} style={s.recentRow}>
                       <LIcon name="clock" size={15} color={c.inkFaint} />
                       <Txt size={14.5} weight="medium" color={c.ink} numberOfLines={1} style={{ flex: 1 }}>
@@ -132,8 +133,8 @@ export default function Search() {
             </Txt>
             <View style={s.chipsWrap}>
               {SUGGESTIONS.map((sugg, i) => (
-                <Animated.View key={sugg} entering={FadeInDown.delay(i * 50)}>
-                  <Press onPress={() => setText(sugg)} scaleTo={0.94} style={[s.suggChip, { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : '#EEF1F6' }]}>
+                <Animated.View key={sugg} entering={enterItem(i)}>
+                  <Press onPress={() => setText(sugg)} scaleTo={0.94} style={[s.suggChip, { backgroundColor: c.bgSoft }]}>
                     <LIcon name="trending-up" size={13} color={c.brand} />
                     <Txt size={13} weight="semibold" color={c.ink}>
                       {sugg}
@@ -146,7 +147,7 @@ export default function Search() {
               Popular right now
             </Txt>
             {(trending.data ?? []).map((a, i) => (
-              <ArticleRow key={a.id} a={a} index={i} />
+              <ArticleRow key={a.id} a={a} index={i} animate />
             ))}
           </>
         ) : !isFetching && (data ?? []).length === 0 ? (
@@ -157,7 +158,7 @@ export default function Search() {
             </Txt>
           </View>
         ) : (
-          (data ?? []).map((a, i) => <ArticleRow key={a.id} a={a} index={i} />)
+          (data ?? []).map((a, i) => <ArticleRow key={a.id} a={a} index={i} animate />)
         )}
       </ScrollView>
     </View>

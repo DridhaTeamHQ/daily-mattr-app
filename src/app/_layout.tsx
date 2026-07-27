@@ -7,7 +7,7 @@ import { StatusBar } from 'expo-status-bar';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { QueryClient } from '@tanstack/react-query';
 import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client';
-import { createAsyncStoragePersister } from '@tanstack/query-async-storage-persister';
+import { persister, shouldPersist } from '@/lib/persist';
 import { useFonts } from 'expo-font';
 import {
   Inter_400Regular,
@@ -26,20 +26,27 @@ import {
 import { StoreProvider } from '@/lib/store';
 import { ThemeProvider, useTheme } from '@/lib/theme';
 import { NavVisibilityProvider } from '@/lib/navVisibility';
+import { CelebrationHost } from '@/components/celebration';
+import { ensureEdition, hydrateEdition } from '@/lib/edition';
 import { registerPushToken, checkBreaking, addNotificationTapListener } from '@/lib/notifications';
 import { flush } from '@/lib/telemetry';
 import { ONBOARDED_KEY, setOnboardedFlag, subscribeOnboarded } from '@/lib/onboardingKey';
+import { startNetworkWatch } from '@/lib/network';
+import { AppErrorBoundary } from '@/components/errorBoundary';
 
 SplashScreen.preventAutoHideAsync();
+
+/* react-query's connectivity default is browser-shaped and never fires in
+   React Native, so this has to run before the first query. Started at module
+   scope rather than in an effect: a query mounted during the very first render
+   would otherwise fetch under the stale assumption that it is online. */
+startNetworkWatch();
 
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: { staleTime: 5 * 60_000, retry: 1, gcTime: 24 * 3600_000 },
   },
 });
-
-// Warm start: cached feed renders instantly on cold open.
-const persister = createAsyncStoragePersister({ storage: AsyncStorage, throttleTime: 2000 });
 
 export default function RootLayout() {
   const [loaded] = useFonts({
@@ -63,15 +70,31 @@ export default function RootLayout() {
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
-      <PersistQueryClientProvider client={queryClient} persistOptions={{ persister, maxAge: 24 * 3600_000 }}>
-        <StoreProvider>
-          <ThemeProvider>
-            <NavVisibilityProvider>
-              <ThemedStack />
-            </NavVisibilityProvider>
-          </ThemeProvider>
-        </StoreProvider>
-      </PersistQueryClientProvider>
+      {/* Outside every provider on purpose. A throw inside StoreProvider's
+          hydration or ThemeProvider's first render is exactly the failure this
+          catches, and a boundary nested under them could not. `onReset` clears
+          the query cache so a retry is not handed back the same poisoned
+          data that caused the throw. */}
+      <AppErrorBoundary onReset={() => queryClient.clear()}>
+        <PersistQueryClientProvider
+          client={queryClient}
+          persistOptions={{
+            persister,
+            maxAge: 24 * 3600_000,
+            // only the queries behind the first screen; 'article' (raw_content)
+            // and 'morePages' (unbounded infinite query) are what overflowed
+            dehydrateOptions: { shouldDehydrateQuery: shouldPersist },
+          }}
+        >
+          <StoreProvider>
+            <ThemeProvider>
+              <NavVisibilityProvider>
+                <ThemedStack />
+              </NavVisibilityProvider>
+            </ThemeProvider>
+          </StoreProvider>
+        </PersistQueryClientProvider>
+      </AppErrorBoundary>
     </GestureHandlerRootView>
   );
 }
@@ -100,9 +123,22 @@ function ThemedStack() {
     registerPushToken();
     checkBreaking().catch(() => {});
 
+    // Never let this reject. An unhandled rejection during boot surfaces as a
+    // red box in a dev build and takes the whole app down rather than just
+    // leaving the edition unbuilt — and the edition is not load-bearing for
+    // anything else on screen.
+    hydrateEdition()
+      .then(() => ensureEdition())
+      .catch(() => {});
+
     const sub = AppState.addEventListener('change', (st) => {
-      if (st === 'active') checkBreaking().catch(() => {});
-      else flush();
+      if (st === 'active') {
+        checkBreaking().catch(() => {});
+        // The critical rollover trigger: a phone left open overnight would
+        // otherwise still be showing yesterday's edition. ensureEdition only
+        // rebuilds when the local day has moved forward.
+        ensureEdition().catch(() => {});
+      } else flush();
     });
 
     // notification tap → deep link to the article
@@ -132,6 +168,9 @@ function ThemedStack() {
         <Stack.Screen name="notifications" options={{ animation: 'slide_from_right' }} />
         <Stack.Screen name="settings" options={{ animation: 'slide_from_right' }} />
       </Stack>
+      {/* after <Stack> so it paints above the tab bar, which is absolutely
+          positioned inside the tabs screen rather than in a portal */}
+      <CelebrationHost />
     </>
   );
 }

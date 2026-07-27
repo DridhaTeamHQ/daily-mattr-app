@@ -5,14 +5,17 @@ import { useRouter } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
-import Animated, { FadeInDown, FadeIn, ZoomIn } from 'react-native-reanimated';
-import { radius, shadow } from '@/theme';
+import Animated, {
+  ZoomIn,
+} from 'react-native-reanimated';
+import { radius, shadow, duration } from '@/theme';
 import { useTheme } from '@/lib/theme';
 import { Txt, Press, LIcon, TopicBubble } from '@/components/ui';
 import { supabase } from '@/lib/supabase';
 import { getDeviceId } from '@/lib/telemetry';
 import { tick, soft } from '@/lib/haptics';
 import { ONBOARDED_KEY, setOnboardedFlag } from '@/lib/onboardingKey';
+import { enterContent, enterItem, enterScreen } from '@/lib/transitions';
 
 const { width: W } = Dimensions.get('window');
 const TILE = (W - 56) / 2;
@@ -75,7 +78,7 @@ export default function Onboarding() {
               </Txt>
             </LinearGradient>
           </Animated.View>
-          <Animated.View entering={FadeInDown.delay(200).springify().damping(30).stiffness(250).mass(0.9)} style={{ alignItems: 'center' }}>
+          <Animated.View entering={enterContent().delay(duration.quick)} style={{ alignItems: 'center' }}>
             <Image
               source={require('../../assets/images/wordmark.svg')}
               style={{ width: 210, height: 42, marginTop: 28 }}
@@ -85,7 +88,7 @@ export default function Onboarding() {
               News that matters.
             </Txt>
           </Animated.View>
-          <Animated.View entering={FadeInDown.delay(420).springify().damping(30).stiffness(250).mass(0.9)} style={{ position: 'absolute', left: 24, right: 24, bottom: insets.bottom + 32 }}>
+          <Animated.View entering={enterContent().delay(duration.slow)} style={{ position: 'absolute', left: 24, right: 24, bottom: insets.bottom + 32 }}>
             <Press onPress={() => { tick(); setStep(1); }}>
               <LinearGradient colors={[c.brandLight, c.brand]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={[s.cta, shadow.glowBrand]}>
                 <Txt size={15.5} weight="semibold" color="#fff">
@@ -103,7 +106,7 @@ export default function Onboarding() {
             showsVerticalScrollIndicator={false}
             contentContainerStyle={{ paddingTop: insets.top + 24, paddingBottom: 140 }}
           >
-            <Animated.View entering={FadeIn.duration(350)} style={{ paddingHorizontal: 24 }}>
+            <Animated.View entering={enterScreen()} style={{ paddingHorizontal: 24 }}>
               <Txt size={30} lh={36} weight="extrabold" ls={-1}>
                 What matters{'\n'}to you?
               </Txt>
@@ -120,7 +123,7 @@ export default function Onboarding() {
                 return (
                   <Animated.View
                     key={t}
-                    entering={FadeInDown.delay(Math.min(i, 9) * 55).springify().damping(30).stiffness(250).mass(0.9)}
+                    entering={enterItem(i)}
                     style={{ marginTop: lift, marginHorizontal: 2 }}
                   >
                     <TopicBubble topic={t} size={size} selected={picked.includes(t)} onPress={() => togglePick(t)} />

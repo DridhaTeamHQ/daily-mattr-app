@@ -5,13 +5,14 @@ import { useRouter } from 'expo-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
-import Animated, { FadeInDown, FadeIn } from 'react-native-reanimated';
+import Animated from 'react-native-reanimated';
 import { radius, topicOf } from '@/theme';
 import { useTheme, glassCard } from '@/lib/theme';
 import { Txt, Press, IconButton, BreakingBadge, LIcon } from '@/components/ui';
 import { checkBreaking, markBreakingSeen } from '@/lib/notifications';
 import { artFor } from '@/lib/topicArt';
 import { timeAgo } from '@/lib/content';
+import { enterItem, enterChrome } from '@/lib/transitions';
 
 export default function NotificationsScreen() {
   const insets = useSafeAreaInsets();
@@ -45,7 +46,7 @@ export default function NotificationsScreen() {
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingTop: 8, paddingBottom: 32 }}>
         {isLoading ? null : items.length === 0 ? (
-          <Animated.View entering={FadeIn.duration(300)} style={{ alignItems: 'center', marginTop: 120 }}>
+          <Animated.View entering={enterChrome()} style={{ alignItems: 'center', marginTop: 120 }}>
             <LIcon name="bell-off" size={30} color={c.inkFaint} />
             <Txt size={15} weight="bold" style={{ marginTop: 14 }}>
               All quiet for now
@@ -56,7 +57,7 @@ export default function NotificationsScreen() {
           </Animated.View>
         ) : (
           items.map((b, i) => (
-            <Animated.View key={b.id} entering={FadeInDown.delay(Math.min(i, 6) * 60).springify().damping(30).stiffness(250).mass(0.9)}>
+            <Animated.View key={b.id} entering={enterItem(i)}>
               <Press onPress={() => router.push(`/article/${b.id}`)} style={[s.row, glassCard(c, isDark)]}>
                 <View style={{ flex: 1, paddingRight: 14 }}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>

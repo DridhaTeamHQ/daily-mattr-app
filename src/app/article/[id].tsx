@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef } from 'react';
 import { View, StyleSheet, Share, Dimensions } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -6,7 +6,12 @@ import { useQuery } from '@tanstack/react-query';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { soft, tick, save as saveHaptic } from '@/lib/haptics';
-import * as Speech from 'expo-speech';
+import {
+  useIsSpeaking,
+  toggleSpeech as toggleSpeechFor,
+  stop as stopSpeech,
+  speakingId,
+} from '@/lib/speech';
 import * as WebBrowser from 'expo-web-browser';
 import Animated, {
   useSharedValue,
@@ -16,17 +21,19 @@ import Animated, {
   withTiming,
   Easing,
   Extrapolation,
-  FadeInDown,
 } from 'react-native-reanimated';
-import { colors, radius, shadow, topicOf } from '@/theme';
+import { colors, radius, shadow, topicOf, duration } from '@/theme';
 import { Headline, Txt, BodyText, Press, IconButton, EasedScrim, LIcon, LogoLoader } from '@/components/ui';
 import { RecommendCard } from '@/components/cards';
 import { fetchArticle, fetchRelated } from '@/lib/queries';
-import { timeAgo } from '@/lib/content';
+import { timeAgo, hasAiSummary } from '@/lib/content';
+import { pullQuoteFrom } from '@/lib/sentences';
+import { factBadge, type FactTone } from '@/lib/factLabel';
 import { useStore } from '@/lib/store';
 import { useTheme } from '@/lib/theme';
 import { track, createDwellTimer } from '@/lib/telemetry';
 import { artFor } from '@/lib/topicArt';
+import { enterContent } from '@/lib/transitions';
 
 const { width: W } = Dimensions.get('window');
 const HERO_H = 400;
@@ -37,7 +44,7 @@ export default function ArticleScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { recordRead, isSaved, toggleSaved, isLiked, toggleLiked } = useStore();
-  const [speaking, setSpeaking] = useState(false);
+  const speaking = useIsSpeaking(id);
   const readCompleteSent = useRef(false);
 
   const scrollY = useSharedValue(0);
@@ -69,7 +76,9 @@ export default function ArticleScreen() {
       if (ms > 500) {
         track({ article_id: a.id, event_type: 'dwell', dwell_ms: ms, words: a.wordCount, topic: a.topic });
       }
-      Speech.stop();
+      // only silence our own audio: leaving this screen should not stop a
+      // reader card that was already playing when we arrived
+      if (speakingId() === a.id) stopSpeech();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [a?.id]);
@@ -97,20 +106,50 @@ export default function ArticleScreen() {
     ],
   }));
 
-  const progressStyle = useAnimatedStyle(() => ({ width: `${progress.value * 100}%` }));
+  /* scaleX, not width.
 
-  const paragraphs = useMemo(() => {
-    if (!a) return [];
-    const src = a.modes?.deepDive && a.modes.deepDive.length > a.summary.length ? a.modes.deepDive : (a.body ?? a.summary);
-    return src
-      .split(/\n+/)
-      .flatMap((p) => (p.length > 700 ? p.match(/.{1,600}(?:\s|$)/g) ?? [p] : [p]))
-      .map((p) => p.trim())
-      .filter((p) => p.length > 40)
-      .slice(0, 10);
+     A percentage width inside useAnimatedStyle is a layout property, so
+     Reanimated has to run a Yoga pass on the UI thread for every frame it
+     changes — and this one is driven by the scroll handler, so that was a
+     layout pass per scroll frame for the whole article. scaleX is a pure
+     compositor transform: the same bar, none of the cost. The fill is laid
+     out full width once and anchored left by transformOrigin. */
+  const progressStyle = useAnimatedStyle(() => ({ transform: [{ scaleX: progress.value }] }));
+
+  /* Which text the body is made of matters to the pull quote below, so the two
+     are derived together rather than each guessing. `bodyIsSummary` is the
+     case where the row has no scraped article text and no deep dive — the
+     paragraphs the reader sees are the summary they just read in the card
+     above. */
+  const { paragraphs, bodyIsSummary } = useMemo(() => {
+    if (!a) return { paragraphs: [] as string[], bodyIsSummary: false };
+    const deep = a.modes?.deepDive && a.modes.deepDive.length > a.summary.length ? a.modes.deepDive : null;
+    const src = deep ?? a.body ?? a.summary;
+    return {
+      paragraphs: src
+        .split(/\n+/)
+        .flatMap((p) => (p.length > 700 ? p.match(/.{1,600}(?:\s|$)/g) ?? [p] : [p]))
+        .map((p) => p.trim())
+        .filter((p) => p.length > 40)
+        .slice(0, 10),
+      bodyIsSummary: !deep && !a.body,
+    };
   }, [a]);
 
-  const pullQuote = useMemo(() => a?.modes?.tldr?.[0] ?? null, [a]);
+  /* The pull quote is the one thing breaking up a column of body text, and it
+     used to be `modes.tldr[0]` — null for the ~88% of rows the summariser has
+     not reached, so almost every article was a flat wall.
+
+     Suppressed when the body is the summary. A quote lifted from the summary
+     and set three lines below the summary is not a pull quote, it is the same
+     sentence twice. Short summaries dodged this by accident (one paragraph
+     means the `i === 1` slot never comes round) but one over 700 characters
+     gets chunked into two, and then it would have shown. */
+  const pullQuote = useMemo(
+    () => (bodyIsSummary ? null : pullQuoteFrom(a?.modes?.tldr, a?.summary)),
+    [a, bodyIsSummary],
+  );
+  const byAi = !!a && hasAiSummary(a);
 
   if (isLoading || !a) {
     return (
@@ -124,18 +163,10 @@ export default function ArticleScreen() {
   const saved = isSaved(a.id);
   const liked = isLiked(a.id);
 
-  const toggleSpeech = () => {
-    if (speaking) {
-      Speech.stop();
-      setSpeaking(false);
-    } else {
-      setSpeaking(true);
-      Speech.speak(`${a.title}. ${a.summary}`, {
-        onDone: () => setSpeaking(false),
-        onStopped: () => setSpeaking(false),
-      });
-    }
-  };
+  // routed through lib/speech so this screen and a reader card can't both
+  // believe they are playing — Speech.stop() is global, so whoever starts
+  // second silences the first, and only a shared owner tells the first
+  const toggleSpeech = () => toggleSpeechFor(a.id, `${a.title}. ${a.summary}`);
 
   return (
     <View style={{ flex: 1, backgroundColor: c.bg }}>
@@ -162,14 +193,14 @@ export default function ArticleScreen() {
         </View>
 
         {/* headline block */}
-        <Animated.View entering={FadeInDown.duration(450).springify().damping(30).stiffness(250).mass(0.9)} style={{ paddingHorizontal: 24, marginTop: -92 }}>
+        <Animated.View entering={enterContent()} style={{ paddingHorizontal: 24, marginTop: -92 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 9 }}>
             <LinearGradient colors={[c.brandLight, c.brand]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={s.topicChip}>
               <Txt size={11.5} weight="semibold" color="#fff" ls={0.3}>
                 {a.topic}
               </Txt>
             </LinearGradient>
-            {a.factLabel ? <LIcon name="shield-check" size={16} color={c.brand} /> : null}
+            <FactChip label={a.factLabel} />
           </View>
           <Headline style={{ marginTop: 14 }}>{a.title}</Headline>
 
@@ -180,17 +211,17 @@ export default function ArticleScreen() {
               </Txt>
             </LinearGradient>
             <View style={{ flex: 1, marginLeft: 11 }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
-                <Txt size={13.5} weight="semibold">
-                  {a.publisher}
-                </Txt>
-                <LIcon name="badge-check" size={13.5} color={c.brand} />
-              </View>
+              {/* the blue tick is gone: it asserted a verification the app
+                  never performs, and the fact-check chip above the headline is
+                  the one badge here that is actually backed by data */}
+              <Txt size={13.5} weight="semibold">
+                {a.publisher}
+              </Txt>
               <Txt size={12} weight="medium" color={c.inkFaint} style={{ marginTop: 2 }}>
                 {timeAgo(a.publishedAt)} · {a.readMins} min read
               </Txt>
             </View>
-            <Press haptic={false} onPress={toggleSpeech} style={[s.listenBtn, { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : '#EEF1F6' }, speaking ? { backgroundColor: c.brand } : null]}>
+            <Press haptic={false} onPress={toggleSpeech} style={[s.listenBtn, { backgroundColor: c.bgSoft }, speaking ? { backgroundColor: c.brand } : null]}>
               <LIcon name={speaking ? 'square' : 'headphones'} size={14} color={speaking ? '#fff' : c.ink} />
               <Txt size={13} weight="semibold" color={speaking ? '#fff' : c.ink}>
                 {speaking ? 'Stop' : 'Listen'}
@@ -199,16 +230,49 @@ export default function ArticleScreen() {
           </View>
         </Animated.View>
 
-        {/* AI summary — glowing card */}
-        <Animated.View entering={FadeInDown.delay(140).springify().damping(30).stiffness(250).mass(0.9)} style={[s.aiCard, shadow.glowBrand]}>
-          <LinearGradient colors={isDark ? ['rgba(255,255,255,0.09)', 'rgba(77,136,255,0.08)'] : ['#FFFFFF', '#F5F9FF']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={s.aiInner}>
+        {/* The summary card, labelled by provenance.
+
+            This said "AI Summary" over a sparkles mark for every article. On
+            live data only about one row in eight has been through the
+            summariser (`versions` is null for the rest), so seven times out of
+            eight the app was crediting an AI with the publisher's own RSS
+            blurb. The card is the same shape either way — the text really is
+            the summary — but the mark, the heading and the attribution now
+            tell the truth, and the AI badge means something again when it
+            does appear. */}
+        <Animated.View entering={enterContent().delay(duration.instant)} style={[s.aiCard, byAi ? shadow.glowBrand : null]}>
+          <LinearGradient
+            colors={
+              isDark
+                ? byAi
+                  ? ['rgba(255,255,255,0.09)', 'rgba(77,136,255,0.08)']
+                  : ['rgba(255,255,255,0.07)', 'rgba(255,255,255,0.04)']
+                : byAi
+                  ? ['#FFFFFF', '#F5F9FF']
+                  : ['#FFFFFF', '#F6F8FB']
+            }
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={s.aiInner}
+          >
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7 }}>
-              <LinearGradient colors={[c.brandLight, c.brand]} style={s.aiIcon}>
-                <LIcon name="sparkles" size={12} color="#fff" />
-              </LinearGradient>
+              {byAi ? (
+                <LinearGradient colors={[c.brandLight, c.brand]} style={s.aiIcon}>
+                  <LIcon name="sparkles" size={12} color="#fff" />
+                </LinearGradient>
+              ) : (
+                <View style={[s.aiIcon, { backgroundColor: isDark ? 'rgba(255,255,255,0.12)' : '#E7ECF4' }]}>
+                  <LIcon name="align-left" size={12} color={c.inkSoft} strokeWidth={2.4} />
+                </View>
+              )}
               <Txt size={13.5} weight="bold">
-                AI Summary
+                {byAi ? 'AI Summary' : 'In brief'}
               </Txt>
+              {!byAi ? (
+                <Txt size={11.5} weight="medium" color={c.inkFaint} numberOfLines={1} style={{ flexShrink: 1 }}>
+                  · from {a.publisher}
+                </Txt>
+              ) : null}
             </View>
             <Txt size={15} lh={25} color={isDark ? "#C4CEDD" : "#3A4150"} style={{ marginTop: 10 }}>
               {a.summary}
@@ -333,7 +397,51 @@ export default function ArticleScreen() {
   );
 }
 
+/* The fact-check verdict as a chip you can actually read.
+
+   Tinted rather than solid so it sits beside the topic chip without competing
+   with it — the topic is what the story is, this is a footnote about how far
+   it has been checked. `unknown` deliberately gets no colour at all: an
+   unverified story should look like an absence of evidence, not a warning. */
+function FactChip({ label }: { label: string | null }) {
+  const { c, isDark } = useTheme();
+  const badge = factBadge(label);
+  if (!badge) return null;
+
+  const tint: Record<FactTone, string> = {
+    good: c.success,
+    ok: c.brand,
+    warn: c.warning,
+    unknown: c.inkFaint,
+  };
+  const ink = tint[badge.tone];
+
+  return (
+    <View
+      accessible
+      accessibilityLabel={`Fact check: ${badge.label}`}
+      style={[
+        s.factChip,
+        { backgroundColor: isDark ? 'rgba(255,255,255,0.07)' : 'rgba(11,13,18,0.04)' },
+      ]}
+    >
+      <LIcon name={badge.icon} size={12.5} color={ink} strokeWidth={2.3} />
+      <Txt size={11.5} weight="semibold" color={ink}>
+        {badge.label}
+      </Txt>
+    </View>
+  );
+}
+
 const s = StyleSheet.create({
+  factChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    borderRadius: radius.pill,
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+  },
   progressTrack: {
     position: 'absolute',
     left: 0,
@@ -343,6 +451,9 @@ const s = StyleSheet.create({
     backgroundColor: 'transparent',
   },
   progressFill: {
+    // full width, then scaled from the left edge — see progressStyle
+    width: '100%',
+    transformOrigin: 'left center',
     height: 3,
     backgroundColor: colors.brand,
     borderTopRightRadius: 2,
