@@ -71,7 +71,10 @@ export function PixCard({
 
   React.useEffect(() => trackImpression(a.id, a.topic), [a.id, a.topic]);
 
-  const W = winW - GUTTER * 2;
+  // In the deck the card IS the page: edge to edge, no gutter, no rounding.
+  // Inset on a page reads as a card stranded on a backdrop; full bleed reads
+  // as a format. In the Home list it stays a card among rows.
+  const W = onPage ? winW : winW - GUTTER * 2;
   const H = height ?? Math.round(Math.min(winW * 1.28, 520));
 
   const onScroll = useCallback(
@@ -97,8 +100,10 @@ export function PixCard({
       <View
         style={[
           s.card,
-          { width: W, height: H, marginHorizontal: GUTTER, backgroundColor: isDark ? '#0C111D' : '#0E1524' },
-          onPage ? s.lift : null,
+          { width: W, height: H, backgroundColor: isDark ? '#0C111D' : '#0E1524' },
+          onPage
+            ? { marginHorizontal: 0, borderRadius: 0 }
+            : { marginHorizontal: GUTTER },
         ]}
       >
         <ScrollView
@@ -106,7 +111,8 @@ export function PixCard({
           pagingEnabled
           showsHorizontalScrollIndicator={false}
           onScroll={onScroll}
-          scrollEventThrottle={32}
+          scrollEventThrottle={16}
+          decelerationRate="fast"
           style={{ flex: 1 }}
         >
           <SlideOne a={a} style={style} runs={runs} W={W} H={H} topicGrad={t.grad} wash={t.wash} />
@@ -218,7 +224,12 @@ export function PixCard({
         scaleTo={0.97}
         accessibilityRole="button"
         accessibilityLabel={`Read the full story from ${a.publisher}`}
-        style={[s.footer, { marginHorizontal: GUTTER }]}
+        style={[
+          s.footer,
+          onPage
+            ? { position: 'absolute', left: 22, right: 22, bottom: 18, marginHorizontal: 0 }
+            : { marginHorizontal: GUTTER },
+        ]}
       >
         <Txt size={12.5} weight="semibold" color={onPage ? 'rgba(255,255,255,0.92)' : c.inkSoft}>
           {a.publisher} · Read full story

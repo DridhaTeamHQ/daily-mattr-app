@@ -37,9 +37,7 @@ export function PixPage({
   const { width: winW } = useWindowDimensions();
   const t = topicOf(a.topic);
   const src = a.imageUrl ? { uri: a.imageUrl } : artFor(a.topic);
-  // leaves room for the eyebrow above and the publisher line below without
-  // ever letting the card outgrow its own 4:5-ish proportions
-  const cardH = Math.round(Math.min(winW * 1.24, Math.max(height * 0.62, 360)));
+  // the card fills the page now; the deck's own chrome is the only inset
 
   return (
     <View style={{ height, overflow: 'hidden', backgroundColor: '#080B12' }}>
@@ -61,26 +59,30 @@ export function PixPage({
       />
       <LinearGradient colors={[t.wash, 'rgba(0,0,0,0)']} style={StyleSheet.absoluteFill} />
 
-      <View style={[st.pixPage, { paddingTop: topInset, paddingBottom: NAVBAR_CLEARANCE }]}>
-        <View style={st.eyebrow} pointerEvents="none">
-          <LIcon name="images" size={13} color="rgba(255,255,255,0.7)" strokeWidth={2.2} />
-          <Txt size={10.5} weight="bold" color="rgba(255,255,255,0.7)" ls={1.6}>
-            PICTURE STORY
-          </Txt>
-        </View>
-        <PixCard a={a} index={0} variant="page" height={cardH} commentCount={commentCount} />
+      <View style={st.pixPage}>
+        <PixCard a={a} index={0} variant="page" height={height} commentCount={commentCount} />
+      </View>
+
+      {/* the format label rides over the photo instead of stealing a band above it */}
+      <View style={[st.eyebrow, { top: topInset + 52 }]} pointerEvents="none">
+        <LIcon name="images" size={12} color="rgba(255,255,255,0.66)" strokeWidth={2.2} />
+        <Txt size={10} weight="bold" color="rgba(255,255,255,0.66)" ls={1.6}>
+          PICTURE STORY
+        </Txt>
       </View>
     </View>
   );
 }
 
 const st = StyleSheet.create({
-  pixPage: { flex: 1, justifyContent: 'center' },
+  pixPage: { flex: 1 },
   eyebrow: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 7,
-    marginBottom: 18,
+    gap: 6,
   },
 });

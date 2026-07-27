@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import { View, StyleSheet, Share, Platform, Pressable } from 'react-native';
 import MaskedView from '@react-native-masked-view/masked-view';
 import { BlurView } from 'expo-blur';
@@ -38,7 +38,7 @@ import { track } from '@/lib/telemetry';
 import { artFor } from '@/lib/topicArt';
 import { publisherMark } from '@/lib/publisherLogo';
 import { tick, soft, save as saveHaptic } from '@/lib/haptics';
-import { enterChrome, reflow } from '@/lib/transitions';
+import { enterChrome, enterContent, reflow } from '@/lib/transitions';
 
 /* The full-screen reader card, lifted out of app/(tabs)/reader.tsx.
 
@@ -82,34 +82,61 @@ function ReaderCard({
   const { c, isDark } = useTheme();
   const nav = useNavVisibility();
 
-  // Pull the card rightward to open the publisher's own page. activeOffsetX
-  // keeps it from stealing the vertical paging gesture, and failOffsetY bails
-  // the moment the drag is really a scroll.
+  // The masthead is the way to the publisher now. Dragging the card sideways
+  // was a hidden affordance competing with the vertical paging, and the logo
+  // it revealed is already sitting in the footer being recognised at a glance.
   const openSource = () => {
     track({ article_id: a.id, event_type: 'open_full', topic: a.topic });
     WebBrowser.openBrowserAsync(a.url);
   };
-  const drag = useSharedValue(0);
-  const swipeToSource = useMemo(
+
+  /* Retellings of the same story, swiped through sideways.
+
+     Only the ones this article actually carries are listed — the summariser
+     has reached a fraction of the feed, so offering "Explain like I'm 5" on a
+     story that has no eli5 would be a swipe into an empty page. A story with
+     nothing but its summary has a single mode and the gesture does nothing. */
+  const modes = useMemo(() => {
+    const out: { key: string; label: string; text?: string; points?: string[] }[] = [
+      { key: 'summary', label: 'Summary', text: a.summary },
+    ];
+    if (a.modes?.eli5) out.push({ key: 'eli5', label: "Explain like I'm 5", text: a.modes.eli5 });
+    if (a.modes?.tldr?.length) out.push({ key: 'tldr', label: '60-second read', points: a.modes.tldr });
+    if (a.modes?.keyNumbers?.length) out.push({ key: 'numbers', label: 'Key numbers', points: a.modes.keyNumbers });
+    if (a.modes?.deepDive) out.push({ key: 'deep', label: 'Deep dive', text: a.modes.deepDive });
+    return out;
+  }, [a.summary, a.modes]);
+
+  const [modeIdx, setModeIdx] = useState(0);
+  // a new card in the deck starts on its summary
+  React.useEffect(() => setModeIdx(0), [a.id]);
+
+  const step = useCallback(
+    (dir: number) => {
+      if (modes.length < 2) return;
+      setModeIdx((i) => (i + dir + modes.length) % modes.length);
+      soft();
+    },
+    [modes.length],
+  );
+
+  const modeSwipe = useMemo(
     () =>
       Gesture.Pan()
-        .activeOffsetX(18)
-        .failOffsetY([-14, 14])
-        .onUpdate((e) => {
-          drag.value = Math.max(0, Math.min(e.translationX, 130));
-        })
+        // horizontal intent only: the deck pages vertically through this same
+        // surface, so anything with vertical travel is a scroll, not a swipe
+        .activeOffsetX([-20, 20])
+        .failOffsetY([-16, 16])
         .onEnd((e) => {
-          if (e.translationX > 96) runOnJS(openSource)();
-          drag.value = withSpring(0, spring.snappy);
+          // distance OR speed: a quick flick travels barely 30pt but is just
+          // as clearly a swipe as a slow 80pt drag
+          const far = Math.abs(e.translationX) > 56;
+          const fast = Math.abs(e.velocityX) > 480 && Math.abs(e.translationX) > 18;
+          if (!far && !fast) return;
+          runOnJS(step)(e.translationX < 0 ? 1 : -1);
         }),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [a.id, a.url],
+    [step],
   );
-  const dragStyle = useAnimatedStyle(() => ({ transform: [{ translateX: drag.value * 0.5 }] }));
-  const hintStyle = useAnimatedStyle(() => ({
-    opacity: interpolate(drag.value, [0, 40, 96], [0, 0.5, 1], Extrapolation.CLAMP),
-    transform: [{ scale: interpolate(drag.value, [0, 96], [0.8, 1], Extrapolation.CLAMP) }],
-  }));
   const t = topicOf(a.topic);
   /* Two boolean subscriptions instead of the whole context. This is the
      change that stops every mounted card re-rendering on every swipe — see
@@ -196,17 +223,8 @@ function ReaderCard({
   );
 
   return (
-    <GestureDetector gesture={swipeToSource}>
-      <Animated.View style={[{ height, backgroundColor: c.bg, overflow: 'hidden' }, dragStyle]}>
-        {/* revealed as the card is pulled across */}
-        <Animated.View pointerEvents="none" style={[s.sourceHint, { top: height / 2 - 26 }, hintStyle]}>
-          <View style={[s.sourceHintCircle, { backgroundColor: c.brand }]}>
-            <LIcon name="external-link" size={19} color="#fff" strokeWidth={2.2} />
-          </View>
-          <Txt size={10.5} weight="bold" color={c.ink} style={{ marginTop: 6 }}>
-            Source
-          </Txt>
-        </Animated.View>
+    <GestureDetector gesture={modeSwipe}>
+      <Animated.View style={{ height, backgroundColor: c.bg, overflow: 'hidden' }}>
     <Pressable onPress={() => nav.toggle()} style={{ flex: 1 }}>
       <Image
         source={imgSource}
@@ -356,7 +374,7 @@ function ReaderCard({
               entering={usedComments ? enterChrome() : undefined}
               style={{ flex: 1 }}
             >
-              <SummaryBody a={a} />
+              <SummaryBody a={a} mode={modes[modeIdx]} count={modes.length} index={modeIdx} />
             </Animated.View>
           )}
         </View>
@@ -366,7 +384,20 @@ function ReaderCard({
           {/* the verified tick is gone: it sat next to the masthead asserting
               something the app never actually checks, and once the logo
               replaced the name it was the only thing crowding the row */}
-          <PublisherMark a={a} grad={t.grad} />
+          <Press
+            haptic={false}
+            onPress={() => {
+              tick();
+              openSource();
+            }}
+            scaleTo={0.9}
+            hitSlop={10}
+            accessibilityRole="link"
+            accessibilityLabel={`Open this story on ${a.publisher}`}
+            style={{ flexDirection: 'row', alignItems: 'center', flexShrink: 1 }}
+          >
+            <PublisherMark a={a} grad={t.grad} />
+          </Press>
           <View style={s.actions}>
             <Press
               haptic={false}
@@ -476,8 +507,18 @@ function ReaderCard({
    Hyphenation and the highQuality break strategy stay: they tighten the rag by
    letting long words split and by weighing the whole paragraph rather than
    greedily filling one line at a time. */
-function SummaryBody({ a }: { a: Article }) {
-  const { isDark } = useTheme();
+function SummaryBody({
+  a,
+  mode,
+  count,
+  index,
+}: {
+  a: Article;
+  mode: { key: string; label: string; text?: string; points?: string[] };
+  count: number;
+  index: number;
+}) {
+  const { c, isDark } = useTheme();
   // Subscribed here rather than in ReaderCard on purpose: the index changes
   // several times a second while listening, and this leaf is the only thing
   // that has to repaint for it. Reading it one level up would re-render the
@@ -486,20 +527,73 @@ function SummaryBody({ a }: { a: Article }) {
   const length = useSpokenLength(a.id);
   const rel = start >= SUMMARY_AT(a) ? start - SUMMARY_AT(a) : -1;
 
+  const ink = isDark ? '#DCE4F0' : '#1E242F';
+
   return (
     <View style={{ flex: 1 }}>
-      <SpokenText
-        text={a.summary}
-        start={rel}
-        length={length}
-        progress={start >= 0}
-        size={16.5}
-        lh={26}
-        color={isDark ? '#DCE4F0' : '#1E242F'}
-        numberOfLines={11}
-        android_hyphenationFrequency="full"
-        textBreakStrategy="highQuality"
-      />
+      {/* Only shown once there is somewhere to swipe to. A lone rail under a
+          story with no retellings would advertise a gesture that does nothing. */}
+      {count > 1 ? (
+        <View style={s.modeRail}>
+          <Txt size={10.5} weight="bold" color={c.brand} ls={1.3} style={{ textTransform: 'uppercase' }}>
+            {mode.label}
+          </Txt>
+          <View style={s.modeDots}>
+            {Array.from({ length: count }, (_, i) => (
+              <View
+                key={i}
+                style={[
+                  s.modeDot,
+                  i === index
+                    ? { width: 14, backgroundColor: c.brand }
+                    : { backgroundColor: isDark ? 'rgba(255,255,255,0.22)' : 'rgba(11,13,18,0.16)' },
+                ]}
+              />
+            ))}
+          </View>
+        </View>
+      ) : null}
+
+      {/* keyed on the mode so each retelling crossfades in rather than
+          swapping under the eye */}
+      <Animated.View key={mode.key} entering={enterContent()} style={{ flex: 1 }}>
+        {mode.points ? (
+          <View style={{ gap: 12 }}>
+            {mode.points.slice(0, 5).map((pt, i) => (
+              <View key={i} style={{ flexDirection: 'row', gap: 10 }}>
+                <View style={[s.pointDot, { backgroundColor: c.brand }]} />
+                <Txt size={15.5} lh={23} color={ink} style={{ flex: 1 }}>
+                  {pt}
+                </Txt>
+              </View>
+            ))}
+          </View>
+        ) : mode.key === 'summary' ? (
+          <SpokenText
+            text={a.summary}
+            start={rel}
+            length={length}
+            progress={start >= 0}
+            size={16.5}
+            lh={26}
+            color={ink}
+            numberOfLines={count > 1 ? 10 : 11}
+            android_hyphenationFrequency="full"
+            textBreakStrategy="highQuality"
+          />
+        ) : (
+          <Txt
+            size={16.5}
+            lh={26}
+            color={ink}
+            numberOfLines={10}
+            android_hyphenationFrequency="full"
+            textBreakStrategy="highQuality"
+          >
+            {mode.text}
+          </Txt>
+        )}
+      </Animated.View>
     </View>
   );
 }
@@ -634,20 +728,15 @@ function BurstDot({ angle, v }: { angle: number; v: SharedValue<number> }) {
 }
 
 const s = StyleSheet.create({
-  sourceHint: {
-    position: 'absolute',
-    left: 18,
+  modeRail: {
+    flexDirection: 'row',
     alignItems: 'center',
-    zIndex: 5,
+    justifyContent: 'space-between',
+    marginBottom: 12,
   },
-  sourceHintCircle: {
-    width: 52,
-    height: 52,
-    borderRadius: 26,
-    alignItems: 'center',
-    justifyContent: 'center',
-    boxShadow: '0 8px 24px rgba(57,121,255,0.45)',
-  },
+  modeDots: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  modeDot: { width: 5, height: 5, borderRadius: 3 },
+  pointDot: { width: 6, height: 6, borderRadius: 3, marginTop: 8 },
   countBadge: {
     position: 'absolute',
     top: -2,
