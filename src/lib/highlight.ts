@@ -36,6 +36,33 @@ function isHit(raw: string, wordIndex: number): boolean {
   return PROPER.test(w);
 }
 
+export type EntityKind = 'numeric' | 'acronym' | 'proper';
+export type Entity = { text: string; raw: string; kind: EntityKind; index: number };
+
+/* The classifier above, exposed as tokens rather than render runs.
+
+   The quiz generator needs to know *what kind* of thing each token is —
+   masking a proper noun and offering three other proper nouns is a question,
+   while mixing a name with two numbers and an acronym is a giveaway. Sharing
+   this with highlightRuns keeps one definition of "interesting word" in the
+   app instead of two that drift. */
+export function entitiesOf(title: string): Entity[] {
+  const parts = title.split(/\s+/).filter(Boolean);
+  const out: Entity[] = [];
+  parts.forEach((raw, i) => {
+    const w = core(raw);
+    if (!w) return;
+    // A capitalised first word is just the start of a sentence, not a name.
+    if (i === 0 || STOP.has(w)) return;
+    let kind: EntityKind | null = null;
+    if (NUMERIC.test(w)) kind = 'numeric';
+    else if (ACRONYM.test(w)) kind = 'acronym';
+    else if (w.length >= 4 && PROPER.test(w)) kind = 'proper';
+    if (kind) out.push({ text: w, raw, kind, index: i });
+  });
+  return out;
+}
+
 export function highlightRuns(title: string): Run[] {
   const parts = title.split(/(\s+)/).filter((p) => p !== '');
 
