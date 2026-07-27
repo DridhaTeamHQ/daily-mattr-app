@@ -74,6 +74,9 @@
     ],
     "setupFiles": [
       "<rootDir>/jest.setup.js"
+    ],
+    "roots": [
+      "<rootDir>/src"
     ]
   }
 }
