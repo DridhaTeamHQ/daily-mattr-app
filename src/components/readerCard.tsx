@@ -292,32 +292,39 @@ function ReaderCard({
           all of them would just say the same thing twice. Absolutely
           positioned rather than a list row: the deck's snapToInterval and
           getItemLayout both assume every row is exactly pageH tall. */}
-      {bandStart ? (
-        <View pointerEvents="none" style={[s.bandMark, { top: topInset + 48 }]}>
-          <View style={s.bandChip}>
-            <Txt size={9.5} weight="bold" color="rgba(255,255,255,0.8)" ls={1.4}>
-              {bandStart.toUpperCase()}
-            </Txt>
-          </View>
-        </View>
-      ) : null}
 
       {/* pills live outside the fade so they stay crisp */}
-      <View style={[s.cardTop, { top: topInset + 10 }]}>
+      {/* One line, no chips.
+
+          This was three grey lozenges — topic, timestamp, and the band marker
+          on a second row — floating over the photograph and reading as clutter.
+          They are all the same kind of thing: where this story sits. So they
+          are one line now, held together by separators rather than by three
+          separate backgrounds, with the topic's own colour as the only
+          ornament. The photo already carries a top scrim; a text shadow covers
+          the bright frames it can't. */}
+      <View style={[s.cardTop, { top: topInset + 12 }]} pointerEvents="none">
         {isBreaking(a) ? (
           <BreakingBadge />
         ) : (
-          <View style={s.glassPill}>
-            <Txt size={11.5} weight="semibold" color="#fff" ls={0.3}>
+          <View style={s.tagRow}>
+            <LinearGradient colors={t.grad} style={s.tagDot} />
+            <Txt size={11.5} weight="bold" color="#fff" ls={0.2} style={s.tagInk}>
               {a.topic}
+            </Txt>
+            <Txt size={11.5} weight="medium" color="rgba(255,255,255,0.62)" style={s.tagInk}>
+              ·
+            </Txt>
+            <Txt size={11.5} weight="medium" color="rgba(255,255,255,0.82)" style={s.tagInk}>
+              {timeAgo(a.publishedAt)}
             </Txt>
           </View>
         )}
-        <View style={s.glassPill}>
-          <Txt size={11.5} weight="medium" color="#fff">
-            {timeAgo(a.publishedAt)}
+        {bandStart ? (
+          <Txt size={9.5} weight="bold" color="rgba(255,255,255,0.55)" ls={1.3} style={s.tagInk}>
+            {bandStart.toUpperCase()}
           </Txt>
-        </View>
+        ) : null}
       </View>
 
       {/* frosted sheet that FEATHERS into the image — no hard edge.
@@ -770,22 +777,19 @@ const s = StyleSheet.create({
     left: 22,
     right: 66,
     flexDirection: 'row',
+    alignItems: 'center',
     justifyContent: 'space-between',
   },
-  glassPill: {
-    backgroundColor: 'rgba(11,13,18,0.32)',
-    borderRadius: radius.pill,
-    paddingHorizontal: 13,
-    paddingVertical: 7,
+  tagRow: { flexDirection: 'row', alignItems: 'center', gap: 7 },
+  tagDot: { width: 7, height: 7, borderRadius: 4 },
+  // legibility without a lozenge: the top scrim does most of it, this covers
+  // the bright frames it can't
+  tagInk: {
+    textShadowColor: 'rgba(0,0,0,0.55)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 6,
   },
   pageDim: { backgroundColor: '#000' },
-  bandMark: { position: 'absolute', left: 0, right: 0, alignItems: 'center' },
-  bandChip: {
-    backgroundColor: 'rgba(11,13,18,0.42)',
-    borderRadius: radius.pill,
-    paddingHorizontal: 11,
-    paddingVertical: 4,
-  },
   footer: {
     flexDirection: 'row',
     alignItems: 'center',

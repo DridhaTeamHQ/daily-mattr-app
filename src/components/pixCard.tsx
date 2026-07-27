@@ -3,6 +3,7 @@ import { View, StyleSheet, Share, ScrollView, Pressable, useWindowDimensions } f
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Animated, {
   Easing,
   useAnimatedStyle,
@@ -55,6 +56,9 @@ export function PixCard({
   const { c, isDark } = useTheme();
   const router = useRouter();
   const { width: winW } = useWindowDimensions();
+  // On a page the card starts at the very top of the screen, so its chrome has
+  // to clear the status bar itself — nothing above it is doing that.
+  const insets = useSafeAreaInsets();
   // per-card boolean subscriptions rather than the whole store — same reason
   // as ReaderCard; a Pix deck keeps several of these mounted at once
   const { toggleSaved, toggleLiked, toggleDisliked } = storeActions();
@@ -132,22 +136,25 @@ export function PixCard({
           <SlideTwo a={a} style={style} bullets={bullets} W={W} H={H} wash={t.wash} />
         </ScrollView>
 
-        {/* chrome sits above both slides */}
-        <View style={s.top} pointerEvents="box-none">
+        {/* chrome sits above both slides — one line, no lozenges, matching
+            the deck's cards */}
+        <View style={[s.top, { top: (onPage ? insets.top : 0) + 14 }]} pointerEvents="none">
           {isBreaking(a) ? (
             <BreakingBadge />
           ) : (
-            <View style={s.pill}>
-              <Txt size={11} weight="semibold" color="#fff" ls={0.3}>
+            <View style={s.tagRow}>
+              <LinearGradient colors={t.grad} style={s.tagDot} />
+              <Txt size={11} weight="bold" color="#fff" ls={0.2} style={s.tagInk}>
                 {a.topic}
+              </Txt>
+              <Txt size={11} weight="medium" color="rgba(255,255,255,0.62)" style={s.tagInk}>
+                ·
+              </Txt>
+              <Txt size={11} weight="medium" color="rgba(255,255,255,0.82)" style={s.tagInk}>
+                {timeAgo(a.publishedAt)}
               </Txt>
             </View>
           )}
-          <View style={s.pill}>
-            <Txt size={11} weight="medium" color="#fff">
-              {timeAgo(a.publishedAt)}
-            </Txt>
-          </View>
         </View>
 
         <View style={[s.dots, onPage ? { bottom: 50 } : null]} pointerEvents="none">
@@ -540,17 +547,17 @@ const s = StyleSheet.create({
   footer: { flexDirection: 'row', alignItems: 'center', gap: 3, marginTop: 12, alignSelf: 'flex-start' },
   top: {
     position: 'absolute',
-    top: 14,
-    left: 14,
-    right: 14,
+    left: 20,
+    right: 66, // clears the dial button on a page
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    alignItems: 'center',
   },
-  pill: {
-    backgroundColor: 'rgba(11,13,18,0.42)',
-    borderRadius: radius.pill,
-    paddingHorizontal: 11,
-    paddingVertical: 5,
+  tagRow: { flexDirection: 'row', alignItems: 'center', gap: 7 },
+  tagDot: { width: 7, height: 7, borderRadius: 4 },
+  tagInk: {
+    textShadowColor: 'rgba(0,0,0,0.55)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 6,
   },
   copy: {
     position: 'absolute',
