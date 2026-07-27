@@ -47,6 +47,15 @@ const PUBLISHER_MAP: [RegExp, string][] = [
   [/bbc/i, 'BBC'],
 ];
 
+/* Collapses syndicated duplicates — the same story pushed by several feeds
+   arrives with near-identical headlines. Hoisted out of the Home screen so the
+   edition builder agrees with the feed about what counts as "the same story";
+   two different definitions would let a story the user already read reappear
+   in tomorrow's edition. */
+export function normTitle(t: string): string {
+  return t.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().slice(0, 80);
+}
+
 export function publisherOf(source: string | null): string {
   if (!source) return 'Daily Mattr';
   for (const [re, name] of PUBLISHER_MAP) if (re.test(source)) return name;
@@ -64,10 +73,22 @@ export function cleanText(s: string | null | undefined): string {
   return out.replace(/[ \t]+/g, ' ').replace(/\s*\n\s*/g, '\n').trim();
 }
 
-function mapModes(v: any): ReadingModes | null {
+export function mapModes(v: any): ReadingModes | null {
   if (!v || typeof v !== 'object') return null;
-  const arr = (x: any): string[] | null =>
-    Array.isArray(x) ? x.map((s) => cleanText(String(s))).filter(Boolean) : null;
+  /* Empty means absent, and the distinction matters more than it looks.
+
+     This used to return the filtered array whatever its length, and `[]` is
+     truthy — so a row whose `versions` is `{"tldr": []}` (the summariser ran,
+     produced nothing, and wrote the blob anyway) came back as a non-null
+     ReadingModes. Everything reading `modes?.tldr ?? []` shrugged that off,
+     but `hasAiSummary` is a plain null check, so such a row would carry the
+     sparkles mark and the words "AI Summary" over text no AI wrote — the exact
+     claim that badge now exists to make honestly. */
+  const arr = (x: any): string[] | null => {
+    if (!Array.isArray(x)) return null;
+    const out = x.map((s) => cleanText(String(s))).filter(Boolean);
+    return out.length ? out : null;
+  };
   const str = (x: any): string | null => (typeof x === 'string' && x.trim() ? cleanText(x) : null);
   const modes: ReadingModes = {
     eli5: str(v.eli5),
@@ -103,6 +124,22 @@ export function mapArticle(row: any): Article {
   };
 }
 
+/* Did the summariser actually touch this row?
+
+   `versions` is where the AI output lands — eli5, tldr, key_numbers,
+   deep_dive — and `mapModes` returns null when none of them are present. The
+   `summary` field, by contrast, is populated for every row: it is the
+   publisher's own RSS blurb unless an editor replaced it.
+
+   The distinction matters because the article page was labelling every
+   summary "AI Summary" under a sparkles mark, and on live data only about one
+   row in eight has been through the summariser. The other seven were being
+   credited to an AI that never read them. One definition, here, so no surface
+   has to re-derive it and get it subtly different. */
+export function hasAiSummary(a: Article): boolean {
+  return !!a.modes;
+}
+
 export function timeAgo(iso: string): string {
   const ms = Date.now() - new Date(iso).getTime();
   const m = Math.floor(ms / 60000);
@@ -113,6 +150,26 @@ export function timeAgo(iso: string): string {
   const d = Math.floor(h / 24);
   if (d < 7) return `${d}d ago`;
   return new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+}
+
+/* The same age, spelled out for a screen reader.
+
+   timeAgo is written to be *read*, so it abbreviates: "20m ago". TalkBack
+   pronounces that "twenty m ago", which is the kind of detail that makes an
+   app sound broken to someone who only ever hears it. */
+export function spokenAge(iso: string): string {
+  const label = timeAgo(iso);
+  if (label === 'now') return 'just now';
+  const m = /^(\d+)([mhd]) ago$/.exec(label);
+  if (!m) return `published ${label}`;
+  const n = Number(m[1]);
+  const unit = m[2] === 'm' ? 'minute' : m[2] === 'h' ? 'hour' : 'day';
+  return `${n} ${unit}${n === 1 ? '' : 's'} ago`;
+}
+
+/** One line describing a story card, for `accessibilityLabel`. */
+export function cardLabel(a: Article): string {
+  return `${a.title}. ${a.topic}, ${spokenAge(a.publishedAt)}, ${a.readMins} minute read.`;
 }
 
 export function isBreaking(a: Article): boolean {
