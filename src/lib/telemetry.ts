@@ -45,8 +45,18 @@ export async function getDeviceId(): Promise<string> {
   return id;
 }
 
+/* app_events.article_id is a uuid with a foreign key into the pipeline's
+   articles table, so a CMS id cannot go in it — the cast fails and takes the
+   whole batch with it. The topic still carries, so a CMS story a reader dwells
+   on shapes their topic affinity; only the per-article row is dropped, which is
+   correct until engagement has a home in DB B (see the CMS integration brief). */
+function pipelineIdOnly(id: string | null | undefined): string | null {
+  if (!id) return null;
+  return id.startsWith('cms:') ? null : id;
+}
+
 export function track(e: AppEvent) {
-  buffer.push(e);
+  buffer.push({ ...e, article_id: pipelineIdOnly(e.article_id) });
   if (buffer.length >= 20) {
     void flush();
   } else if (!timer) {

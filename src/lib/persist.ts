@@ -43,8 +43,8 @@ const MAX_CHARS = 1_200_000;
 /* A new key, so the oversized row already sitting on every existing install is
    never read — reading it is the thing that throws. It is deleted below by
    name instead, which needs no read. */
-const KEY = 'dailymattr.rq.v2';
-const LEGACY_KEY = 'REACT_QUERY_OFFLINE_CACHE';
+const KEY = 'dailymattr.rq.v3';
+const LEGACY_KEYS = ['REACT_QUERY_OFFLINE_CACHE', 'dailymattr.rq.v2'];
 
 /* Refuse to write a row that cannot be read back.
 
@@ -70,14 +70,22 @@ export const persister = createAsyncStoragePersister({
   },
 });
 
-/* Drop the pre-fix cache.
+/* Drop superseded caches.
 
    Runs here rather than being exported for app/_layout.tsx to call: this file
-   owns both keys, so the cleanup belongs beside them, and a module-scope call
-   in the router's root layout re-executes on every Fast Refresh — which is how
+   owns the keys, so the cleanup belongs beside them, and a module-scope call in
+   the router's root layout re-executes on every Fast Refresh — which is how
    this surfaced as `ReferenceError: Property 'dropLegacyCache' doesn't exist`
    the first time a hot update landed before the new module was registered.
 
    Deleting by name needs no read, so it cannot hit the CursorWindow error that
-   reading the oversized row does. */
-AsyncStorage.removeItem(LEGACY_KEY).catch(() => {});
+   reading an oversized row does.
+
+   v3 is a deliberate break, not a bug fix: the content source changed, so a
+   device holding a warm cache of pipeline-only stories would show them for a
+   day before they aged out — including any story the desk has since corrected
+   or never approved. Dropping the cache means the first launch after this
+   update reads the feed fresh from the current source. */
+LEGACY_KEYS.forEach((k) => {
+  AsyncStorage.removeItem(k).catch(() => {});
+});

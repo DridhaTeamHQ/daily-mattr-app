@@ -34,7 +34,14 @@ const shape = (r: Row): Comment => ({
   replyCount: Number(r.reply_count ?? 0),
 });
 
+/* Comments live in DB A keyed to a pipeline article. A CMS item has no row
+   there, so the uuid cast fails and the thread errors rather than showing
+   empty. Until engagement has a home in DB B, CMS stories simply have no
+   thread — reported honestly here instead of throwing at the panel. */
+export const commentsSupported = (articleId: string) => !articleId.startsWith('cms:');
+
 export async function fetchComments(articleId: string, limit = 120): Promise<Comment[]> {
+  if (!commentsSupported(articleId)) return [];
   const device = await getDeviceId();
   const { data, error } = await supabase.rpc('app_comments_for', {
     p_article: articleId,
@@ -50,6 +57,7 @@ export async function addComment(
   body: string,
   parentId?: string | null,
 ): Promise<Comment> {
+  if (!commentsSupported(articleId)) throw new Error('Comments are not available on this story yet');
   const device = await getDeviceId();
   const { data, error } = await supabase.rpc('app_add_comment', {
     p_device: device,
@@ -77,6 +85,7 @@ export async function toggleCommentLike(
 }
 
 export async function fetchCommentCounts(ids: string[]): Promise<Record<string, number>> {
+  ids = ids.filter(commentsSupported);
   if (!ids.length) return {};
   const { data, error } = await supabase.rpc('app_comment_counts', { p_ids: ids });
   if (error) throw error;

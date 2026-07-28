@@ -1,7 +1,8 @@
 import { supabase } from './supabase';
 import { ARTICLE_COLS, mapArticle, mapModes, type Article } from './content';
-import { isPixEligible } from './feed';
+import { isPixEligible, mergeByRecency } from './feed';
 import { getDeviceId } from './telemetry';
+import { CMS_ONLY, fetchCmsFeed, fetchCmsItem, fetchSelections, isCmsId, withOverrides } from './cms';
 
 const PUBLISHED = ['approved', 'sent'];
 
@@ -10,14 +11,26 @@ const PUBLISHED = ['approved', 'sent'];
 // topic in any window of 5.
 export async function fetchForYou(limit = 60): Promise<Article[]> {
   const deviceId = await getDeviceId();
-  const { data, error } = await supabase.rpc('app_get_feed', {
-    p_device_id: deviceId,
-    p_limit: limit,
-  });
+  const [{ data, error }, authored] = await Promise.all([
+    supabase.rpc('app_get_feed', { p_device_id: deviceId, p_limit: limit }),
+    // the desk's own items, fetched alongside rather than after — two regions,
+    // so serialising the round trips would be felt
+    fetchCmsFeed(24),
+  ]);
   if (error) throw error;
-  const ranked = (data ?? []).map(mapArticle);
-  return diversify(ranked);
+  const ranked = await withOverrides((data ?? []).map(mapArticle));
+  // Under the hard cut a pipeline story reaches a reader only if the desk
+  // approved it — everything else is supply the newsroom hasn't chosen.
+  const supply = CMS_ONLY ? await approvedOnly(ranked) : ranked;
+  return diversify(mergeByRecency(supply, authored));
 }
+
+/** Keeps only pipeline stories an editor has selected into the feed. */
+async function approvedOnly(list: Article[]): Promise<Article[]> {
+  const sels = await fetchSelections();
+  return list.filter((a) => sels.has(a.id));
+}
+
 
 function diversify(list: Article[]): Article[] {
   const out: Article[] = [];
@@ -194,18 +207,36 @@ export async function fetchTrending(limit = 8): Promise<Article[]> {
 }
 
 export async function fetchArticle(id: string): Promise<Article | null> {
+  // A prefixed id belongs to the CMS; anything else is a pipeline story.
+  if (isCmsId(id)) return fetchCmsItem(id);
+
   const { data, error } = await supabase
     .from('articles')
     .select(ARTICLE_COLS + ',raw_content,versions')
     .eq('id', id)
     .maybeSingle();
   if (error) throw error;
-  return data ? mapArticle(data) : null;
+  if (!data) return null;
+  // the desk's correction applies here too — a reader who opens a story must
+  // see the same words the card showed them
+  const [withEdit] = await withOverrides([mapArticle(data)]);
+  return withEdit;
 }
 
 // Related stories: true vector similarity via app_related (embedding cosine).
 // Falls back to same-topic recency if the article has no embedding.
 export async function fetchRelated(a: Article, limit = 6): Promise<Article[]> {
+  /* app_related matches on the pipeline's title embedding, which a CMS item
+     doesn't have — it was never scraped or embedded. Same-topic recency is the
+     honest answer rather than an empty rail. */
+  if (isCmsId(a.id)) {
+    const { data, error } = await ordered(
+      supabase.from('articles').select(ARTICLE_COLS).in('status', PUBLISHED).eq('topic', a.topic),
+    ).limit(limit);
+    if (error) return [];
+    return (data ?? []).map(mapArticle);
+  }
+
   const { data, error } = await supabase.rpc('app_related', {
     p_article_id: a.id,
     p_limit: limit,

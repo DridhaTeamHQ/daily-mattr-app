@@ -107,3 +107,28 @@ export function composeFeed(articles: Article[]): FeedItem[] {
 
   return out;
 }
+
+/* CMS items join the ranked feed on published time.
+
+   Not appended, not given a fixed slot: an item a writer published an hour ago
+   belongs among the stories from an hour ago. Ranking still decides the order of
+   pipeline stories among themselves — this only decides where the desk's work
+   lands relative to them.
+
+   Pure, like the rest of this module, so the rule can be tested against fixed
+   timestamps rather than against whatever the feed happens to hold today. */
+export function mergeByRecency(ranked: Article[], authored: Article[]): Article[] {
+  if (!authored.length) return ranked;
+  const seen = new Set(ranked.map((a) => a.id));
+  const fresh = authored.filter((a) => !seen.has(a.id));
+  if (!fresh.length) return ranked;
+
+  const at = (a: Article) => new Date(a.publishedAt).getTime() || 0;
+  const out = [...ranked];
+  for (const item of fresh) {
+    const i = out.findIndex((a) => at(a) < at(item));
+    if (i === -1) out.push(item);
+    else out.splice(i, 0, item);
+  }
+  return out;
+}
