@@ -1,214 +1,140 @@
 import { supabase } from './supabase';
-import { ARTICLE_COLS, mapArticle, mapModes, type Article } from './content';
-import { isPixEligible, mergeByRecency } from './feed';
-import { getDeviceId } from './telemetry';
-import { CMS_ONLY, fetchCmsFeed, fetchCmsItem, fetchSelections, isCmsId, withOverrides } from './cms';
+import { ARTICLE_COLS, mapArticle, type Article } from './content';
+import { featuredFirst } from './feed';
+import { applyOverride, fetchCmsByIds, fetchCmsFeed, fetchCmsItem, fetchSelections, isCmsId } from './cms';
 
-const PUBLISHED = ['approved', 'sent'];
+/* Reading the app's content.
+ *
+ * There is exactly one rule in this file, and everything else follows from it:
+ * **nothing reaches a reader that an editor did not put in front of them.**
+ *
+ * That means the pipeline's `articles` table is no longer somewhere the app
+ * goes looking for stories. It is a body store: it holds the text of the
+ * stories the desk approved into `article_selections`, and the app fetches
+ * those rows *by id*. It never selects from it by topic, by recency, by rank,
+ * or by anything else — because any such query answers "what did the scraper
+ * collect", and the app's question is "what did the newsroom publish".
+ *
+ * The whole content set is small on purpose: the desk's published pix and qix,
+ * plus the stories it approved. `liveArticles` and `fetchCmsFeed` are the only
+ * two doors, and every function below is built from them.
+ */
 
-// Personalized feed via the app_get_feed RPC (two-stage retrieve+score in
-// Postgres), followed by a client-side diversity pass: max 2 of the same
-// topic in any window of 5.
-export async function fetchForYou(limit = 60): Promise<Article[]> {
-  const deviceId = await getDeviceId();
-  const [{ data, error }, authored] = await Promise.all([
-    supabase.rpc('app_get_feed', { p_device_id: deviceId, p_limit: limit }),
-    // the desk's own items, fetched alongside rather than after — two regions,
-    // so serialising the round trips would be felt
-    fetchCmsFeed(24),
-  ]);
-  if (error) throw error;
-  const ranked = await withOverrides((data ?? []).map(mapArticle));
-  // Under the hard cut a pipeline story reaches a reader only if the desk
-  // approved it — everything else is supply the newsroom hasn't chosen.
-  const supply = CMS_ONLY ? await approvedOnly(ranked) : ranked;
-  return diversify(mergeByRecency(supply, authored));
-}
+/* Options for anything showing the desk's work.
+ *
+ * The app is a window onto a CMS someone is editing right now, so the feed
+ * cannot only update when the reader happens to pull down on it. Thirty
+ * seconds is short enough that an editor watching a phone sees their change
+ * land while they are still looking at it, and long enough that a feed of two
+ * dozen rows costs nothing to keep current. Polling stops when the app is
+ * backgrounded — react-query pauses intervals for unfocused clients, and focus
+ * is wired to AppState in lib/network.
+ *
+ * This is the floor, not the ceiling: DB B's `supabase_realtime` publication
+ * has no tables in it, so nothing is broadcast and there is nothing to
+ * subscribe to. Adding `content_items` and `article_selections` to it turns
+ * this into instant updates. */
+export const LIVE_QUERY = {
+  refetchInterval: 30_000,
+  refetchOnWindowFocus: true,
+  refetchOnMount: true,
+} as const;
 
-/** Keeps only pipeline stories an editor has selected into the feed. */
-async function approvedOnly(list: Article[]): Promise<Article[]> {
+/* A selection can point at an id the pipeline never had, and Postgres errors on
+   a malformed uuid rather than ignoring it — which would take down the feed
+   instead of dropping one row. The CMS guards its own reads the same way. */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/* Deliberately uncached.
+ *
+ * There was a 60-second memo here, so that the four surfaces reading the
+ * approved set within the same second — home, the deck, search, the quiz —
+ * didn't each pay a round trip. It also meant an editor's change could sit
+ * invisible for a minute *after* a refetch had already been triggered, which
+ * made the app look broken in exactly the way a CMS must not: you press save,
+ * you pull to refresh, and nothing happens.
+ *
+ * react-query is the cache, and it is the one the refresh gesture and the
+ * polling interval can actually invalidate. A dozen rows by id is a cheap
+ * request; a stale newsroom is not.
+ */
+
+/**
+ * The stories the desk approved into the app feed: DB A bodies, DB B
+ * corrections, the desk's running order — featured first, then approval order.
+ */
+export async function liveArticles(): Promise<Article[]> {
   const sels = await fetchSelections();
-  return list.filter((a) => sels.has(a.id));
-}
-
-
-function diversify(list: Article[]): Article[] {
-  const out: Article[] = [];
-  const pool = [...list];
-  while (pool.length) {
-    const window = out.slice(-4);
-    let idx = pool.findIndex(
-      (a) => window.filter((w) => w.topic === a.topic).length < 2,
-    );
-    if (idx === -1) idx = 0; // relax rather than stall
-    out.push(pool.splice(idx, 1)[0]);
-  }
-  return out;
-}
-
-// Reader stream for the Articles tab — includes the versions payload
-// (ELI5 / TL;DR / key numbers / deep dive). With `topics` set it becomes a
-// recency-ordered topic deck instead of the personalized ranking.
-export async function fetchReaderFeed(limit = 40, topics?: string[]): Promise<Article[]> {
-  if (topics?.length) {
-    const { data, error } = await supabase
-      .from('articles')
-      .select(ARTICLE_COLS + ',versions')
-      .in('status', PUBLISHED)
-      .in('topic', expandTopics(topics))
-      .order('reviewed_at', { ascending: false, nullsFirst: false })
-      .order('scraped_at', { ascending: false })
-      .limit(limit);
-    if (error) throw error;
-    return (data ?? []).map(mapArticle);
-  }
-
-  const deviceId = await getDeviceId();
-  const { data, error } = await supabase.rpc('app_get_feed', {
-    p_device_id: deviceId,
-    p_limit: limit,
-  });
-  if (error) throw error;
-  const ids = (data ?? []).map((r: any) => r.id);
+  // Insertion order is approval order (fetchSelections orders ascending), and
+  // it is the only place the feed's running order comes from.
+  const ids = [...sels.keys()].filter((id) => UUID_RE.test(id));
   if (!ids.length) return [];
-  const { data: full, error: e2 } = await supabase
-    .from('articles')
-    .select(ARTICLE_COLS + ',versions')
-    .in('id', ids);
-  if (e2) throw e2;
-  const map = new Map((full ?? []).map((r: any) => [r.id, r]));
-  return diversify(
-    (data ?? [])
-      .map((r: any) => {
-        const fullRow = map.get(r.id);
-        return fullRow ? mapArticle({ ...fullRow, score: r.score, sim: r.sim }) : null;
-      })
-      .filter(Boolean) as Article[],
-  );
-}
 
-/* Pix needs a photo AND the three key points, which the personalized feed
-   RPC does not carry. ~39% of the corpus qualifies, so a plain recency query
-   over the versions payload is enough — no new RPC. */
-export async function fetchPix(
-  limit = 24,
-  topics?: string[],
-  before?: string | null,
-): Promise<Article[]> {
-  /* `versions->tldr is not null` used to be a server-side filter here, and it
-     starved this deck: the summariser has reached a small fraction of the
-     table, so the Pix category was drawing from roughly one story in fourteen
-     while the rest of the app had thousands. The gate is now lib/feed's
-     isPixEligible, which falls back to the summary — the same rule the mixed
-     feed uses, so a story is a picture story in both places or neither.
-
-     A photo is still required in SQL: that one is cheap, indexed, and no
-     fallback can invent an image. */
-  let q = supabase
-    .from('articles')
-    .select(ARTICLE_COLS + ',versions')
-    .in('status', PUBLISHED)
-    .not('image_url', 'is', null);
-  if (topics?.length) q = q.in('topic', expandTopics(topics));
-  // Keyset, same shape as fetchFeedPage: `before` is the publishedAt of the
-  // last card already on screen, and publishedAt is reviewed_at ?? scraped_at,
-  // which is exactly what ordered() sorts on. Offset paging would drift as new
-  // articles land at the top; this cannot.
-  if (before) {
-    q = q.or(`reviewed_at.lt.${before},and(reviewed_at.is.null,scraped_at.lt.${before})`);
-  }
-  // 1.4x rather than 2x: nearly everything with a photo now qualifies, so the
-  // old overfetch was mostly wasted rows over the wire
-  const { data, error } = await ordered(q).limit(Math.ceil(limit * 1.4));
-  if (error) throw error;
-  return (data ?? []).map(mapArticle).filter(isPixEligible).slice(0, limit);
-}
-
-/* The quiz needs `versions` — fetchByIds selects ARTICLE_COLS only, and
-   without tldr/key_numbers the generator can't tell which entities are
-   central to a story and falls back to any capitalised word. */
-export async function fetchArticlesWithModes(ids: string[]): Promise<Article[]> {
-  if (!ids.length) return [];
   const { data, error } = await supabase
     .from('articles')
     .select(ARTICLE_COLS + ',versions')
     .in('id', ids);
   if (error) throw error;
-  const byId = new Map((data ?? []).map((r: any) => [r.id, mapArticle(r)]));
-  return ids.map((id) => byId.get(id)).filter(Boolean) as Article[];
+
+  const byId = new Map((data ?? []).map((r: any) => [r.id, r]));
+  const rows: Article[] = [];
+  for (const id of ids) {
+    const row = byId.get(id);
+    // an approval can outlive the row it points at; skip rather than blank-card
+    if (!row) continue;
+    rows.push(applyOverride(mapArticle(row), sels.get(id)));
+  }
+
+  return featuredFirst(rows);
 }
 
-/* Just the reading-mode payloads for a set of ids.
-
-   The personalized feed RPC (app_get_feed) does not return `versions`, so a
-   story that arrives through For You has no tldr and can never pass the Pix
-   gate — which silently meant no picture stories on the main feed at all.
-   Rather than refetch whole rows, this pulls the one missing column and the
-   caller merges it in. Small payload, one round trip. */
-export async function fetchModesFor(ids: string[]): Promise<Record<string, Article['modes']>> {
-  if (!ids.length) return {};
-  const { data, error } = await supabase.from('articles').select('id,versions').in('id', ids);
-  if (error) throw error;
-  const out: Record<string, Article['modes']> = {};
-  for (const r of data ?? []) out[(r as any).id] = mapModes((r as any).versions);
-  return out;
+/** Everything live, in one list: approved stories, then the desk's own items. */
+async function liveEverything(): Promise<Article[]> {
+  const [approved, authored] = await Promise.all([liveArticles(), fetchCmsFeed(60)]);
+  return [...approved, ...authored];
 }
 
-/** Recent articles used only as a distractor corpus. */
-export async function fetchQuizPool(limit = 150): Promise<Article[]> {
-  const { data, error } = await ordered(
-    supabase.from('articles').select(ARTICLE_COLS + ',versions').in('status', PUBLISHED),
-  ).limit(limit);
-  if (error) throw error;
-  return (data ?? []).map(mapArticle);
+/* Home. No ranking pass and no diversity pass: both existed to impose order on
+   thousands of scraped rows, and the desk's running order is now the answer to
+   that question. composeFeed lays the pix and qix onto the reading rhythm. */
+export async function fetchForYou(): Promise<Article[]> {
+  return liveEverything();
 }
 
-function ordered(q: any) {
-  return q
-    .order('reviewed_at', { ascending: false, nullsFirst: false })
-    .order('scraped_at', { ascending: false });
+/** The reader deck. A category filter narrows the same set — never widens it. */
+export async function fetchReaderFeed(topics?: string[]): Promise<Article[]> {
+  const all = await liveEverything();
+  if (!topics?.length) return all;
+  // Every story carries one of the desk's eight by the time it gets here — the
+  // fold from the pipeline's own taxonomy happens in lib/categories, at the
+  // point a row is mapped. There is nothing left to expand or alias.
+  const want = new Set(topics);
+  return all.filter((a) => want.has(a.topic));
 }
 
-export async function fetchFeed(opts: { topics?: string[]; limit?: number } = {}): Promise<Article[]> {
-  let q = supabase.from('articles').select(ARTICLE_COLS).in('status', PUBLISHED);
-  if (opts.topics?.length) q = q.in('topic', expandTopics(opts.topics));
-  const { data, error } = await ordered(q).limit(opts.limit ?? 40);
-  if (error) throw error;
-  return (data ?? []).map(mapArticle);
+/** Picture stories — authored in the CMS, never derived from a photo. */
+export async function fetchPix(limit = 40): Promise<Article[]> {
+  return fetchCmsFeed(limit, 'pix');
 }
 
-export async function fetchHeroes(): Promise<Article[]> {
-  const { data, error } = await supabase
-    .from('articles')
-    .select(ARTICLE_COLS)
-    .in('status', PUBLISHED)
-    .not('image_url', 'is', null)
-    .order('prominence', { ascending: false, nullsFirst: false })
-    .order('reviewed_at', { ascending: false, nullsFirst: false })
-    .limit(30);
-  if (error) throw error;
-  // prefer fresh: among top-prominence rows keep the 5 most recent
-  const arts = (data ?? []).map(mapArticle);
-  return arts
-    .sort((a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime())
-    .slice(0, 5);
-}
-
-export async function fetchTrending(limit = 8): Promise<Article[]> {
-  const { data, error } = await supabase
-    .from('articles')
-    .select(ARTICLE_COLS)
-    .in('status', PUBLISHED)
-    .not('image_url', 'is', null)
-    .order('rank_score', { ascending: false, nullsFirst: false })
-    .limit(limit);
-  if (error) throw error;
-  return (data ?? []).map(mapArticle);
+/** Short vertical video. */
+export async function fetchQix(limit = 40): Promise<Article[]> {
+  return fetchCmsFeed(limit, 'qix');
 }
 
 export async function fetchArticle(id: string): Promise<Article | null> {
   // A prefixed id belongs to the CMS; anything else is a pipeline story.
   if (isCmsId(id)) return fetchCmsItem(id);
+
+  /* Approval is checked before the row is even fetched.
+     A route is reachable by a stale link, a notification tap, or a saved id
+     that has since been unapproved — and every one of those would otherwise
+     open a story the desk took down. Returning null puts the reader on "Story
+     not found · it may have been removed since you opened it", which is what
+     actually happened. */
+  const sels = await fetchSelections();
+  const sel = sels.get(id);
+  if (!sel) return null;
 
   const { data, error } = await supabase
     .from('articles')
@@ -217,143 +143,99 @@ export async function fetchArticle(id: string): Promise<Article | null> {
     .maybeSingle();
   if (error) throw error;
   if (!data) return null;
+
   // the desk's correction applies here too — a reader who opens a story must
   // see the same words the card showed them
-  const [withEdit] = await withOverrides([mapArticle(data)]);
-  return withEdit;
+  return applyOverride(mapArticle(data), sel);
 }
 
-// Related stories: true vector similarity via app_related (embedding cosine).
-// Falls back to same-topic recency if the article has no embedding.
+/** Related reading: the same topic, from what else is live. */
 export async function fetchRelated(a: Article, limit = 6): Promise<Article[]> {
-  /* app_related matches on the pipeline's title embedding, which a CMS item
-     doesn't have — it was never scraped or embedded. Same-topic recency is the
-     honest answer rather than an empty rail. */
-  if (isCmsId(a.id)) {
-    const { data, error } = await ordered(
-      supabase.from('articles').select(ARTICLE_COLS).in('status', PUBLISHED).eq('topic', a.topic),
-    ).limit(limit);
-    if (error) return [];
-    return (data ?? []).map(mapArticle);
-  }
-
-  const { data, error } = await supabase.rpc('app_related', {
-    p_article_id: a.id,
-    p_limit: limit,
-  });
-  if (!error && data?.length) return data.map(mapArticle);
-  const { data: fb, error: e2 } = await supabase
-    .from('articles')
-    .select(ARTICLE_COLS)
-    .in('status', PUBLISHED)
-    .in('topic', expandTopics([a.topic]))
-    .neq('id', a.id)
-    .order('reviewed_at', { ascending: false, nullsFirst: false })
-    .limit(limit);
-  if (e2) throw e2;
-  return (fb ?? []).map(mapArticle);
+  const all = await liveEverything();
+  return all.filter((x) => x.id !== a.id && x.topic === a.topic).slice(0, limit);
 }
 
-// Breaking news for the bell screen / notification polling.
-export type BreakingItem = Article & { breakingScore: number; sourceCount: number; detectedAt: string };
-export async function fetchBreaking(limit = 20): Promise<BreakingItem[]> {
-  const { data, error } = await supabase.rpc('app_get_breaking', { p_limit: limit });
-  if (error) throw error;
-  return (data ?? []).map((r: any) => ({
-    ...mapArticle(r),
-    breakingScore: r.breaking_score,
-    sourceCount: r.source_count,
-    detectedAt: r.detected_at,
-  }));
+/* Search runs in memory.
+ *
+ * It used to be a semantic edge function over the pipeline's embeddings, with
+ * an `ilike` fallback — both of which search the scraped corpus, and so would
+ * hand a reader a story the desk never approved. Over a content set this size
+ * a substring match is not a downgrade: it is instant, works offline against
+ * the cached feed, and cannot return something that isn't live.
+ */
+export async function searchArticles(qtext: string, limit = 30): Promise<Article[]> {
+  const q = qtext.trim().toLowerCase();
+  if (!q) return [];
+  const all = await liveEverything();
+  const hit = (a: Article) =>
+    a.title.toLowerCase().includes(q) ||
+    a.summary.toLowerCase().includes(q) ||
+    a.topic.toLowerCase().includes(q);
+  return all.filter(hit).slice(0, limit);
 }
 
-// Keyset pagination for "More stories" — stable under new inserts.
-export async function fetchFeedPage(opts: {
-  before?: string | null;
-  topics?: string[];
-  limit?: number;
-}): Promise<Article[]> {
-  let q = supabase.from('articles').select(ARTICLE_COLS).in('status', PUBLISHED);
-  if (opts.topics?.length) q = q.in('topic', expandTopics(opts.topics));
-  if (opts.before) {
-    q = q.or(`reviewed_at.lt.${opts.before},and(reviewed_at.is.null,scraped_at.lt.${opts.before})`);
-  }
-  const { data, error } = await ordered(q).limit(opts.limit ?? 15);
-  if (error) throw error;
-  return (data ?? []).map(mapArticle);
+/** What to offer before anything has been typed. */
+export async function fetchSuggestions(limit = 6): Promise<Article[]> {
+  return (await liveEverything()).slice(0, limit);
 }
 
-// Semantic search via edge function; falls back to ilike when unavailable.
-export async function searchSemantic(qtext: string, limit = 20): Promise<{ results: Article[]; semantic: boolean }> {
-  try {
-    const { data, error } = await supabase.functions.invoke('app-semantic-search', {
-      body: { query: qtext, limit },
-    });
-    if (error) throw error;
-    const rows = (data?.results ?? []) as any[];
-    if (rows.length) return { results: rows.map(mapArticle), semantic: true };
-  } catch {
-    // fall through to keyword search
-  }
-  return { results: await searchArticles(qtext, limit), semantic: false };
+/* The quiz corpus.
+
+   Every live story, whether or not it carries reading modes — the generator
+   needs distractors as much as it needs subjects, and a story without a tldr
+   is still a usable wrong answer. */
+export async function fetchQuizPool(): Promise<Article[]> {
+  return liveEverything();
 }
 
+export async function fetchArticlesWithModes(ids: string[]): Promise<Article[]> {
+  if (!ids.length) return [];
+  const byId = new Map((await liveEverything()).map((a) => [a.id, a]));
+  return ids.map((id) => byId.get(id)).filter(Boolean) as Article[];
+}
+
+/* Saved articles and reading history — the one place ids arrive from somewhere
+ * other than a feed. They come off the device, were stored possibly weeks ago,
+ * and freely mix both databases.
+ *
+ * This is also the last door the old corpus could walk back in through. A
+ * device that was used before the cut has saves and history full of scraped
+ * ids, and looking a row up by id works perfectly whether or not anyone
+ * approved it — so Profile went on listing stories the feed had stopped
+ * showing. The selection set is the filter, exactly as it is everywhere else.
+ *
+ * The ids are not discarded, only unresolved: re-approve a story and the saved
+ * card comes back rather than having been quietly deleted from under someone.
+ */
 export async function fetchByIds(ids: string[]): Promise<Article[]> {
   if (!ids.length) return [];
-  const { data, error } = await supabase
-    .from('articles')
-    .select(ARTICLE_COLS)
-    .in('id', ids);
-  if (error) throw error;
-  const map = new Map((data ?? []).map((r: any) => [r.id, mapArticle(r)]));
+  const sels = await fetchSelections();
+  const cmsIds = ids.filter(isCmsId);
+  const pipelineIds = ids.filter((id) => !isCmsId(id) && UUID_RE.test(id) && sels.has(id));
+
+  const [pipeline, authored] = await Promise.all([
+    pipelineIds.length
+      ? supabase.from('articles').select(ARTICLE_COLS).in('id', pipelineIds)
+      : Promise.resolve({ data: [], error: null }),
+    fetchCmsByIds(cmsIds),
+  ]);
+  if (pipeline.error) throw pipeline.error;
+
+  const map = new Map<string, Article>();
+  for (const r of (pipeline.data ?? []) as any[]) {
+    map.set(r.id, applyOverride(mapArticle(r), sels.get(r.id)));
+  }
+  for (const a of authored) map.set(a.id, a);
+  // caller's order is the reader's order — most recently saved first
   return ids.map((id) => map.get(id)).filter(Boolean) as Article[];
 }
 
-export async function searchArticles(qtext: string, limit = 30): Promise<Article[]> {
-  const like = `%${qtext.replace(/[%_]/g, '')}%`;
-  const { data, error } = await supabase
-    .from('articles')
-    .select(ARTICLE_COLS)
-    .in('status', PUBLISHED)
-    .or(`title.ilike.${like},edited_title.ilike.${like}`)
-    .limit(limit);
-  if (error) throw error;
-  return (data ?? []).map(mapArticle);
-}
-
-// Topic counts for Explore — derived client-side from recent rows (read-only DB,
-// no aggregate RPCs available to anon).
+/** Topic counts for the dial, over what is actually live. */
 export async function fetchTopicStats(): Promise<Record<string, number>> {
-  const { data, error } = await supabase
-    .from('articles')
-    .select('topic')
-    .in('status', PUBLISHED)
-    .limit(1000);
-  if (error) throw error;
   const counts: Record<string, number> = {};
-  for (const r of data ?? []) {
-    const t = r.topic === 'Technology' ? 'Tech & AI' : r.topic;
-    if (!t) continue;
-    counts[t] = (counts[t] ?? 0) + 1;
+  for (const a of await liveEverything()) {
+    if (!a.topic) continue;
+    counts[a.topic] = (counts[a.topic] ?? 0) + 1;
   }
   return counts;
-}
-
-export async function fetchTopicCover(topic: string): Promise<Article | null> {
-  const { data, error } = await supabase
-    .from('articles')
-    .select(ARTICLE_COLS)
-    .in('status', PUBLISHED)
-    .in('topic', expandTopics([topic]))
-    .not('image_url', 'is', null)
-    .order('prominence', { ascending: false, nullsFirst: false })
-    .limit(1);
-  if (error) throw error;
-  return data?.[0] ? mapArticle(data[0]) : null;
-}
-
-function expandTopics(topics: string[]): string[] {
-  const out = new Set(topics);
-  if (out.has('Tech & AI')) out.add('Technology');
-  return [...out];
 }

@@ -14,7 +14,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { spring } from '@/theme';
 import { tick } from '@/lib/haptics';
-import { topicArt } from '@/lib/topicArt';
+import { CATEGORY_NAMES } from '@/lib/categories';
 import { Txt, Press, LIcon, TopicBubble } from './ui';
 
 /* ---------- Full-screen topic dial ----------
@@ -26,11 +26,23 @@ import { Txt, Press, LIcon, TopicBubble } from './ui';
    change — the same components, the same constants, the same gestures. */
 
 const { width: W } = Dimensions.get('window');
-const READER_TOPICS = Object.keys(topicArt);
+/* The desk's categories, in the desk's order.
+   This read `Object.keys(topicArt)` — every piece of artwork the app happened
+   to ship, which is how the dial came to offer six categories no editor could
+   file a story under. Artwork is now a consequence of the category list rather
+   than the definition of it. */
+const READER_TOPICS = CATEGORY_NAMES;
 
 const WHEEL_ROW = 108;
-export const PIX_FILTER = '•Pix'; // sentinel, not a real topic
-export const WHEEL_ITEMS: (string | null)[] = [null, PIX_FILTER, ...READER_TOPICS]; // null = For You
+/* Sentinels, not real topics. Pix and Video are *formats* — the desk publishes
+   a story as one — so they sit in the same ring as the topics without being
+   one, and the deck switches source rather than filtering. */
+export const PIX_FILTER = '•Pix';
+export const VIDEO_FILTER = '•Video';
+export const FORMAT_FILTERS: string[] = [PIX_FILTER, VIDEO_FILTER];
+export const isFormatFilter = (t: string | null): boolean =>
+  t !== null && FORMAT_FILTERS.includes(t);
+export const WHEEL_ITEMS: (string | null)[] = [null, PIX_FILTER, VIDEO_FILTER, ...READER_TOPICS]; // null = For You
 
 /* The dial is a half-circle hinged off the right edge: every topic is placed
    by its angle, so the focused one swings out toward the middle of the screen
@@ -114,7 +126,7 @@ export function TopicWheel({
       </GestureDetector>
       {WHEEL_ITEMS.map((t, i) => (
         <ArcBubble key={t ?? 'foryou'} index={i} spin={spin} cy={cy} ry={ry}>
-          {t === null || t === PIX_FILTER ? (
+          {t === null || isFormatFilter(t) ? (
             <Press
               haptic={false}
               onPress={() => {
@@ -124,9 +136,12 @@ export function TopicWheel({
               scaleTo={0.94}
               style={{ alignItems: 'center' }}
             >
-              {/* Pix is a format, not a topic, so it gets its own bubble rather
-                  than a topic artwork and the sentinel showing through */}
-              <FormatBubble kind={t === null ? 'foryou' : 'pix'} brand={brand} />
+              {/* A format gets its own bubble rather than a topic artwork with
+                  the sentinel showing through */}
+              <FormatBubble
+                kind={t === null ? 'foryou' : t === PIX_FILTER ? 'pix' : 'video'}
+                brand={brand}
+              />
             </Press>
           ) : (
             <TopicBubble
@@ -191,18 +206,31 @@ function ArcBubble({
    reader screen draws the chosen one again for the bloom that plays over the
    deck. Two copies of a 92pt circle drifted apart the moment either was
    touched, and the bloom's whole job is to look like the same object. */
-export function FormatBubble({ kind, brand }: { kind: 'foryou' | 'pix'; brand: string }) {
-  const isForYou = kind === 'foryou';
+const FORMAT_LOOK: Record<string, { grad: [string, string]; icon: string; label: string }> = {
+  pix: { grad: ['#9B6CFF', '#5B2BD9'], icon: 'images', label: 'Pix' },
+  // warm against Pix's violet, so the two format bubbles never read as the same
+  // one glimpsed twice as the ring spins past
+  video: { grad: ['#FF7A59', '#E03E7A'], icon: 'circle-play', label: 'Video' },
+};
+
+export function FormatBubble({
+  kind,
+  brand,
+}: {
+  kind: 'foryou' | 'pix' | 'video';
+  brand: string;
+}) {
+  const look = kind === 'foryou' ? null : FORMAT_LOOK[kind];
   return (
     <LinearGradient
-      colors={isForYou ? [brand, brand] : ['#9B6CFF', '#5B2BD9']}
+      colors={look ? look.grad : [brand, brand]}
       start={{ x: 0, y: 0 }}
       end={{ x: 1, y: 1 }}
       style={st.forYouBubble}
     >
-      <LIcon name={isForYou ? 'sparkles' : 'images'} size={20} color="#fff" strokeWidth={2.2} />
+      <LIcon name={look ? look.icon : 'sparkles'} size={20} color="#fff" strokeWidth={2.2} />
       <Txt size={12} weight="bold" color="#fff" style={{ marginTop: 3 }}>
-        {isForYou ? 'For You' : 'Pix'}
+        {look ? look.label : 'For You'}
       </Txt>
     </LinearGradient>
   );

@@ -1,5 +1,7 @@
 import { createClient } from '@supabase/supabase-js';
 import { type Article, cleanText } from './content';
+import { categoryOfSlug } from './categories';
+import { usableCover } from './media';
 
 /* DB B — the CMS.
  *
@@ -21,36 +23,25 @@ const CMS_ANON_KEY = process.env.EXPO_PUBLIC_CMS_ANON_KEY;
    than throwing, so a CMS outage costs the editorial layer, not the feed. */
 export const cmsEnabled = !!(CMS_URL && CMS_ANON_KEY);
 
-/* The hard cut, and the one line that performs it.
+/* The cut, and what survives it.
  *
- * The intent is for the CMS to be the app's only content source and for the
- * pipeline to be supply that reaches readers only once the desk has approved
- * it. That is what this flag does when true: no pipeline story appears unless
- * an editor selected it, and nothing else is read from DB A for content.
+ * The CMS is now the app's only content source. Nothing reaches a reader that
+ * an editor did not put in front of them: the desk's own pix and qix, and the
+ * pipeline stories it approved into `article_selections`. DB A is still read —
+ * it holds the *bodies* of those approved stories, and it holds the runtime
+ * (comments, telemetry, saves, the streak) — but it is no longer somewhere the
+ * app goes looking for something to show.
  *
- * It is false because DB B cannot serve the app yet, and that is a fact about
- * the database rather than a preference. Every policy on content_items and
- * article_selections is scoped to `authenticated`; there is no `anon` policy,
- * so the app's publishable key reads zero rows — a 200 with an empty array,
- * never an error. Flipping this today produces an empty app, not a small one.
+ * This used to be a `CMS_ONLY` flag, off, because every policy on DB B was
+ * scoped to `authenticated` and the app's publishable key read zero rows.
+ * Anon read policies now exist for `content_items` (published only), and for
+ * `article_selections` and `categories`, so the flag had nothing left to guard.
  *
- * What unblocks it, on DB B:
- *
- *   create policy content_read_public on public.content_items
- *     for select to anon using (status = 'published');
- *   create policy selections_read_public on public.article_selections
- *     for select to anon using (true);
- *   create policy categories_read_public on public.categories
- *     for select to anon using (is_active);
- *
- * Note the first one is narrower than the staff policy on purpose: staff read
- * every status, readers must only ever see `published`, or drafts ship.
- *
- * Personalisation, comments, breaking news, push and search still live in DB A
- * and are unaffected by this flag — they are runtime, not content. Moving them
- * is the schema project in §6 of the integration brief.
+ * Engagement is the part that has not moved. There is no likes/comments table
+ * in DB B — see §6 of the integration brief — so a CMS item has no thread and
+ * no per-article telemetry row. Both degrade quietly rather than erroring; the
+ * guards are `commentsSupported` and `pipelineIdOnly`.
  */
-export const CMS_ONLY = false;
 
 export const cms = cmsEnabled
   ? createClient(CMS_URL!, CMS_ANON_KEY!, {
@@ -78,20 +69,9 @@ export const CMS_PREFIX = 'cms:';
 export const isCmsId = (id: string) => id.startsWith(CMS_PREFIX);
 export const bareCmsId = (id: string) => id.slice(CMS_PREFIX.length);
 
-/* CMS categories are the desk's eight; the app's topics are the pipeline's
-   thirteen, and they carry the artwork and colour. Map onto what the app can
-   already render rather than adding topics with no identity behind them. */
-const CATEGORY_TO_TOPIC: Record<string, string> = {
-  india: 'India',
-  world: 'World',
-  politics: 'Politics',
-  business: 'Business',
-  technology: 'Tech & AI',
-  science: 'Science',
-  sports: 'Sports',
-  entertainment: 'Explained',
-};
-
+/* The desk's eight are the app's eight — see lib/categories.
+   This used to be a translation table onto the pipeline's own thirteen topics,
+   which is how `entertainment` ended up displayed as "Explained". */
 type ContentRow = {
   id: string;
   kind: 'article' | 'pix' | 'qix' | 'trax';
@@ -132,9 +112,15 @@ function mapContentItem(r: ContentRow): Article {
     // and the article page already falls back to the summary when body is null.
     body: null,
     url: first?.url ?? '',
-    topic: CATEGORY_TO_TOPIC[(r.category_slug ?? '').toLowerCase()] ?? 'Explained',
+    topic: categoryOfSlug(r.category_slug),
     publisher: first?.title ?? 'Daily Mattr',
-    imageUrl: r.cover_url,
+    /* Normalised here rather than at each card.
+       Some rows point `cover_url` at the same YouTube page as their media, and
+       an <Image> handed an HTML document fails silently — a black card with a
+       headline on it and no clue why. Nulling it at the boundary means every
+       surface falls back to the topic's own artwork, which they all already do
+       when a story has no photo. */
+    imageUrl: usableCover(r.cover_url),
     publishedAt: r.published_at ?? r.created_at,
     prominence: 0,
     factLabel: r.fact_label,
@@ -143,11 +129,24 @@ function mapContentItem(r: ContentRow): Article {
     readMins: Math.max(1, Math.round(words / 220)),
     wordCount: words,
     modes: points?.length ? { eli5: null, tldr: points, keyNumbers: null, deepDive: null } : null,
+    /* The desk's own kinds map onto the three the app renders. `trax` is audio
+       and has no slot yet, so it reads as a plain story rather than being
+       dropped — a published trax should still be reachable, just not pretending
+       to be a video. */
+    format: r.kind === 'pix' ? 'pix' : r.kind === 'qix' ? 'qix' : 'article',
+    featured: false,
+    mediaUrl: r.media_url,
+    // bigint over the wire arrives as a string
+    durationSec: r.duration_sec == null ? null : Number(r.duration_sec) || null,
   };
 }
 
-/** Everything the desk has published, newest first. */
-export async function fetchCmsFeed(limit = 40): Promise<Article[]> {
+/**
+ * Everything the desk has published, newest first. With `kind` set it returns
+ * just that format — which is how the Pix and Video decks are built, rather
+ * than by filtering a mixed feed the app already paid to fetch.
+ */
+export async function fetchCmsFeed(limit = 40, kind?: ContentRow['kind']): Promise<Article[]> {
   if (!cms) return [];
   /* Wrapped, not just error-checked.
 
@@ -157,10 +156,9 @@ export async function fetchCmsFeed(limit = 40): Promise<Article[]> {
      whole feed down and react-query retried it forever. The CMS is additive:
      it can be absent, and the feed must not notice. */
   try {
-    const { data, error } = await cms
-      .from('content_items')
-      .select(FEED_COLS)
-      .eq('status', 'published')
+    let q = cms.from('content_items').select(FEED_COLS).eq('status', 'published');
+    if (kind) q = q.eq('kind', kind);
+    const { data, error } = await q
       .order('published_at', { ascending: false, nullsFirst: false })
       .limit(limit);
     if (error) {
@@ -171,6 +169,26 @@ export async function fetchCmsFeed(limit = 40): Promise<Article[]> {
     return (data ?? []).map((r) => mapContentItem(r as ContentRow));
   } catch (e) {
     warnOnce('feed unreachable', String((e as Error)?.message ?? e));
+    return [];
+  }
+}
+
+/** Saved items, looked up in one round trip. Unpublished ids simply don't return. */
+export async function fetchCmsByIds(ids: string[]): Promise<Article[]> {
+  if (!cms || !ids.length) return [];
+  try {
+    const { data, error } = await cms
+      .from('content_items')
+      .select(FEED_COLS)
+      .in('id', ids.map(bareCmsId))
+      .eq('status', 'published');
+    if (error) {
+      warnOnce('lookup unavailable', error.message);
+      return [];
+    }
+    return (data ?? []).map((r) => mapContentItem(r as ContentRow));
+  } catch (e) {
+    warnOnce('lookup unreachable', String((e as Error)?.message ?? e));
     return [];
   }
 }
@@ -202,21 +220,37 @@ export type Selection = {
   imageOverride: string | null;
 };
 
-/* Selections change when an editor acts, not when a reader scrolls, so they are
-   fetched once and reused. Without this every feed call would pay a second
-   round trip to a different region for a table of a few dozen rows. */
+/* A very short cache, and short on purpose.
+ *
+ * This exists so the handful of surfaces that read the approved set within the
+ * same second — home, the deck, search, the quiz — don't each pay a round trip
+ * to a second region for the same few dozen rows. It is *not* a freshness
+ * policy: it was two minutes, which meant an editor could save a change, watch
+ * the app refresh, and still see the old headline. Two seconds collapses the
+ * burst without ever being the reason something looks stale.
+ *
+ * The Map's insertion order is the feed's order — see fetchSelections. */
 let cache: { at: number; rows: Map<string, Selection> } | null = null;
-const TTL_MS = 120_000;
+const TTL_MS = 2_000;
+
+/** Forget the approved set now — used when a refresh must actually re-read. */
+export function invalidateSelections(): void {
+  cache = null;
+}
 
 export async function fetchSelections(): Promise<Map<string, Selection>> {
   if (!cms) return new Map();
   if (cache && Date.now() - cache.at < TTL_MS) return cache.rows;
 
   try {
+    /* Ascending, and it is not a detail: the CMS says "order follows approval —
+       the first story approved leads the feed", and §5 of the integration brief
+       is explicit that there is no rank column to read instead. Descending here
+       would silently invert the desk's running order. */
     const { data, error } = await cms
       .from('article_selections')
       .select('article_id,is_featured,approved_at,title_override,summary_override,image_override')
-      .order('approved_at', { ascending: false, nullsFirst: false });
+      .order('approved_at', { ascending: true, nullsFirst: false });
 
     if (error) {
       warnOnce('selections unavailable', error.message);
@@ -259,8 +293,16 @@ export function applyOverride(a: Article, sel: Selection | undefined): Article {
   const title = sel.titleOverride?.trim() || a.title;
   const summary = sel.summaryOverride?.trim() || a.summary;
   const imageUrl = sel.imageOverride?.trim() || a.imageUrl;
-  if (title === a.title && summary === a.summary && imageUrl === a.imageUrl) return a;
-  return { ...a, title, summary, imageUrl };
+  const featured = sel.isFeatured;
+  if (
+    title === a.title &&
+    summary === a.summary &&
+    imageUrl === a.imageUrl &&
+    featured === a.featured
+  ) {
+    return a;
+  }
+  return { ...a, title, summary, imageUrl, featured };
 }
 
 /** Applies the desk's corrections across a list, fetching them once. */

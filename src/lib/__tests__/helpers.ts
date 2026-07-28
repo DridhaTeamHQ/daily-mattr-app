@@ -22,6 +22,8 @@ export function article(over: Partial<Article> = {}): Article {
     readMins: 1,
     wordCount: 2,
     modes: null,
+    format: 'article',
+    featured: false,
     ...over,
   };
 }

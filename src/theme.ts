@@ -207,19 +207,21 @@ export const topicMeta: Record<
   string,
   { icon: string; grad: [string, string]; wash: string; pastel: [string, string]; pastelInk: string }
 > = {
-  'Tech & AI': { icon: 'cpu', grad: ['#7C7AFF', '#2B2A86'], wash: 'rgba(99,102,241,0.18)', pastel: ['#EEEDFF', '#DCD9FF'], pastelInk: '#3B3670' },
-  Business: { icon: 'briefcase-business', grad: ['#12C2B0', '#0B4E49'], wash: 'rgba(14,165,160,0.16)', pastel: ['#E2F7F0', '#CBEEDF'], pastelInk: '#0F5B45' },
-  Politics: { icon: 'landmark', grad: ['#4D88FF', '#16295C'], wash: 'rgba(57,121,255,0.16)', pastel: ['#E9F0FF', '#D6E4FF'], pastelInk: '#24447F' },
+  /* The desk's eight, in its own order — see lib/categories. Five identities
+     that used to belong to pipeline-only topics are gone with them; where a
+     folded topic had the better colour it was kept, so Business is still the
+     teal it always was and Technology inherits Tech & AI's violet. */
   India: { icon: 'map-pin', grad: ['#FF9A4D', '#8A2E0E'], wash: 'rgba(249,115,22,0.16)', pastel: ['#FFEEDD', '#FFDFC2'], pastelInk: '#8A4318' },
   World: { icon: 'globe', grad: ['#9B6CFF', '#3A1B7E'], wash: 'rgba(139,92,246,0.16)', pastel: ['#F1E9FF', '#E3D6FF'], pastelInk: '#4A2E85' },
-  Sports: { icon: 'trophy', grad: ['#2BD96A', '#0F4A28'], wash: 'rgba(34,197,94,0.16)', pastel: ['#E4F8EA', '#CFF0DA'], pastelInk: '#1B5E37' },
+  Politics: { icon: 'landmark', grad: ['#4D88FF', '#16295C'], wash: 'rgba(57,121,255,0.16)', pastel: ['#E9F0FF', '#D6E4FF'], pastelInk: '#24447F' },
+  Business: { icon: 'briefcase-business', grad: ['#12C2B0', '#0B4E49'], wash: 'rgba(14,165,160,0.16)', pastel: ['#E2F7F0', '#CBEEDF'], pastelInk: '#0F5B45' },
+  Technology: { icon: 'cpu', grad: ['#7C7AFF', '#2B2A86'], wash: 'rgba(99,102,241,0.18)', pastel: ['#EEEDFF', '#DCD9FF'], pastelInk: '#3B3670' },
   Science: { icon: 'atom', grad: ['#22C8E6', '#0D3F52'], wash: 'rgba(6,182,212,0.16)', pastel: ['#E1F6FA', '#CBEDF5'], pastelInk: '#0E5468' },
-  Automobile: { icon: 'car-front', grad: ['#FF5A5A', '#6E1414'], wash: 'rgba(239,68,68,0.15)', pastel: ['#FDE8E8', '#FBD5D5'], pastelInk: '#7A2222' },
-  'Real Estate': { icon: 'building-2', grad: ['#FFB020', '#6E4004'], wash: 'rgba(245,158,11,0.16)', pastel: ['#FDF1D8', '#FAE5BC'], pastelInk: '#7A5410' },
-  'Health & Wellness': { icon: 'heart-pulse', grad: ['#FF63A5', '#701540'], wash: 'rgba(236,72,153,0.15)', pastel: ['#FDE7F1', '#FBD3E5'], pastelInk: '#7A2450' },
-  'Markets & Startups': { icon: 'trending-up', grad: ['#17CE8C', '#053D2E'], wash: 'rgba(16,185,129,0.16)', pastel: ['#E1F6EC', '#CDEFDE'], pastelInk: '#0D5C43' },
-  Explained: { icon: 'lightbulb', grad: ['#7C8BA6', '#1B2432'], wash: 'rgba(100,116,139,0.15)', pastel: ['#EDF1F6', '#DEE5EE'], pastelInk: '#39445A' },
-  'Corporate Case': { icon: 'scale', grad: ['#2FB6F5', '#083D5F'], wash: 'rgba(14,165,233,0.16)', pastel: ['#E1F2FC', '#CBE7F8'], pastelInk: '#0D4A6B' },
+  Sports: { icon: 'trophy', grad: ['#2BD96A', '#0F4A28'], wash: 'rgba(34,197,94,0.16)', pastel: ['#E4F8EA', '#CFF0DA'], pastelInk: '#1B5E37' },
+  // rose, the one warm hue not already spoken for — India is orange, Sports green
+  Entertainment: { icon: 'clapperboard', grad: ['#FF63A5', '#701540'], wash: 'rgba(236,72,153,0.15)', pastel: ['#FDE7F1', '#FBD3E5'], pastelInk: '#7A2450' },
+  // not a category: what an unfiled story wears. Neutral on purpose.
+  News: { icon: 'newspaper', grad: ['#7C8BA6', '#1B2432'], wash: 'rgba(100,116,139,0.15)', pastel: ['#EDF1F6', '#DEE5EE'], pastelInk: '#39445A' },
 };
 
 export const fallbackTopic = {
@@ -237,16 +239,13 @@ export function topicOf(topic: string | null | undefined) {
 export const personalityOf = (topic: string | null): string =>
   topic
     ? ({
-        'Tech & AI': 'AI Enthusiast',
-        Business: 'Investor',
-        'Markets & Startups': 'Investor',
-        Politics: 'Analyst',
-        World: 'Explorer',
         India: 'Nation Watcher',
-        Sports: 'Champion',
+        World: 'Explorer',
+        Politics: 'Analyst',
+        Business: 'Investor',
+        Technology: 'AI Enthusiast',
         Science: 'Curious Mind',
-        'Health & Wellness': 'Wellness Seeker',
-        Automobile: 'Gearhead',
-        'Real Estate': 'City Builder',
+        Sports: 'Champion',
+        Entertainment: 'Scene Setter',
       } as Record<string, string>)[topic] ?? 'Explorer'
     : 'Explorer';

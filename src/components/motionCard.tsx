@@ -32,7 +32,7 @@ import { useMotionAllowed } from '@/lib/motion';
 
 const DURATION = 9000;
 
-export function MotionCard({
+function MotionCardBase({
   a,
   index = 0,
   height = 260,
@@ -123,6 +123,10 @@ export function MotionCard({
     </Press>
   );
 }
+
+/* Memoised: a feed cell must not re-render because the list array was rebuilt.
+   See the note on ArticleRow in components/cards.tsx. */
+export const MotionCard = React.memo(MotionCardBase);
 
 const s = StyleSheet.create({
   wrap: { marginHorizontal: 24, marginTop: 8, marginBottom: 22 },

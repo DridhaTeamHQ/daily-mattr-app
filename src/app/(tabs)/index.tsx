@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { View, ScrollView, StyleSheet, RefreshControl, AppState } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useQuery, useInfiniteQuery } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Image } from 'expo-image';
@@ -25,29 +25,39 @@ import { dayKey } from '@/lib/day';
 import { openCelebration } from '@/lib/celebration';
 import { soft } from '@/lib/haptics';
 import { useStore } from '@/lib/store';
-import { CarouselCard, ArticleRow, CAROUSEL_STRIDE } from '@/components/cards';
+import { ArticleRow } from '@/components/cards';
 import { NAVBAR_CLEARANCE } from '@/components/navbar';
 import { TimeBandHeader } from '@/components/timeBand';
 import { groupByBand, type Band } from '@/lib/timeBands';
 import { composeFeed, type FeedItem } from '@/lib/feed';
 import { PixCard } from '@/components/pixCard';
 import { MotionCard } from '@/components/motionCard';
-import { fetchFeed, fetchFeedPage, fetchForYou, fetchTrending, fetchBreaking, fetchModesFor } from '@/lib/queries';
+import { fetchForYou, LIVE_QUERY } from '@/lib/queries';
+import { CATEGORY_NAMES } from '@/lib/categories';
+import { invalidateSelections } from '@/lib/cms';
+import { pruneEdition } from '@/lib/edition';
 import { getUnreadBreaking } from '@/lib/notifications';
 import { useNavVisibility } from '@/lib/navVisibility';
 import { useIsOnline } from '@/lib/network';
 import { enterContent, enterChrome, enterScreen } from '@/lib/transitions';
 
-const TABS: { label: string; topics?: string[] }[] = [
+/* Home is one feed now.
+ *
+ * It used to be three: a "Trending" tab ordered by the pipeline's rank score, a
+ * "Top stories" carousel of six ordered by its prominence score, and topic tabs
+ * that each ran their own query over the corpus. All three answered the same
+ * question — which of the scraped thousands should lead — and none of them was
+ * an editorial answer.
+ *
+ * The desk decides now. `is_featured` leads, approval order follows, and the
+ * topic tabs narrow that one list rather than fetching a different one. */
+/* One tab per category the desk actually publishes into, in its order.
+   The list was hand-written and had drifted: a "Health" tab for a category the
+   CMS does not have, a "Tech" tab under a different name than the desk uses,
+   and Business quietly folding in "Markets & Startups". */
+const TABS: { label: string; topic?: string }[] = [
   { label: 'For You' },
-  { label: 'Trending' },
-  { label: 'Tech', topics: ['Tech & AI'] },
-  { label: 'Politics', topics: ['Politics'] },
-  { label: 'Business', topics: ['Business', 'Markets & Startups'] },
-  { label: 'World', topics: ['World'] },
-  { label: 'India', topics: ['India'] },
-  { label: 'Sports', topics: ['Sports'] },
-  { label: 'Health', topics: ['Health & Wellness'] },
+  ...CATEGORY_NAMES.map((name) => ({ label: name, topic: name })),
 ];
 
 /* One flat array feeds the list: band headers and feed items share it so they
@@ -83,7 +93,6 @@ export default function Home() {
   const nav = useNavVisibility();
   const scrollY = useSharedValue(0);
   const lastY = useSharedValue(0);
-  const carouselX = useSharedValue(0);
 
   // navShown latches the last state we asked for, so runOnJS fires only when
   // visibility actually changes — a handful of times per scroll, not on every
@@ -110,10 +119,6 @@ export default function Home() {
     }
     lastY.value = y;
   });
-  const onCarouselScroll = useAnimatedScrollHandler((e) => {
-    carouselX.value = e.contentOffset.x;
-  });
-
   // the masthead gives way to the stories as you go
   const headerStyle = useAnimatedStyle(() => ({
     opacity: interpolate(scrollY.value, [0, 84], [1, 0], Extrapolation.CLAMP),
@@ -127,35 +132,38 @@ export default function Home() {
 
   const active = TABS.find((t) => t.label === tab)!;
 
-  const forYou = useQuery({ queryKey: ['forYou'], queryFn: () => fetchForYou(60) });
-  const trending = useQuery({
-    queryKey: ['trending'],
-    queryFn: () => fetchTrending(20),
-    enabled: tab === 'Trending',
-  });
-  const topical = useQuery({
-    queryKey: ['topical', tab],
-    queryFn: () => fetchFeed({ topics: active.topics, limit: 30 }),
-    enabled: !!active.topics,
-  });
-  const unread = useQuery({ queryKey: ['breakingUnread'], queryFn: getUnreadBreaking, staleTime: 120_000 });
-  const breakingTop = useQuery({ queryKey: ['breakingTop'], queryFn: () => fetchBreaking(1), staleTime: 120_000 });
+  const forYou = useQuery({ queryKey: ['forYou'], queryFn: fetchForYou, ...LIVE_QUERY });
 
-  const feed = active.topics ? topical.data : tab === 'Trending' ? trending.data : forYou.data;
-  const loading = active.topics ? topical.isLoading : tab === 'Trending' ? trending.isLoading : forYou.isLoading;
+  /* Today's edition is pinned, so a story the desk takes down would otherwise
+     stay in it until midnight. Pruned here because this is where the live set
+     is already in hand — no extra request to find out what is still published. */
+  useEffect(() => {
+    if (forYou.data?.length) pruneEdition(new Set(forYou.data.map((a) => a.id)));
+  }, [forYou.data]);
+  const unread = useQuery({ queryKey: ['breakingUnread'], queryFn: getUnreadBreaking, staleTime: 120_000 });
+
+  const loading = forYou.isLoading;
   /* Home had no failure path at all: a query that errored simply rendered an
      empty list under the header, with nothing to say why and no way to retry.
      Silence is the worst of the options — it reads as "there is no news". */
-  const failed = active.topics ? topical.isError : tab === 'Trending' ? trending.isError : forYou.isError;
-  const refetchFeed = () =>
-    (active.topics ? topical : tab === 'Trending' ? trending : forYou).refetch();
+  const failed = forYou.isError;
+  const refetchFeed = () => forYou.refetch();
   const online = useIsOnline();
+
+  /* One list, narrowed by tab. The topic tabs used to run their own query; they
+     now filter what is already live, because there is nothing else to fetch. */
+  const feed = useMemo(() => {
+    const all = forYou.data ?? [];
+    // every story already carries one of the eight — the fold happens when the
+    // row is mapped (lib/categories), so this is a plain equality test
+    return active.topic ? all.filter((a) => a.topic === active.topic) : all;
+  }, [forYou.data, active.topic]);
 
   // collapse syndicated duplicates (same story pushed by multiple feeds)
   const norm = (t: string) => t.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().slice(0, 80);
   const deduped = useMemo(() => {
     const seen = new Set<string>();
-    return (feed ?? []).filter((a) => {
+    return feed.filter((a) => {
       const k = norm(a.title);
       if (seen.has(k)) return false;
       seen.add(k);
@@ -163,12 +171,14 @@ export default function Home() {
     });
   }, [feed]);
 
-  const carousel = deduped.slice(0, 6);
+  /* Everything, in the desk's order.
 
-  // The pool the mixed feed is composed from. composeFeed decides which of
-  // these become picture stories and which become motion cards; the old
-  // every-fourth-row splice is gone, replaced by a fixed cycle (see lib/feed).
-  const list = useMemo(() => deduped.slice(6, 18), [deduped]);
+     There used to be a slice here: the first six went to a carousel and the
+     next twelve to the list. That split existed because the feed was thousands
+     of rows deep and something had to be chosen for the top. A finite,
+     hand-picked feed doesn't need choosing from — the lead story is simply the
+     one the desk flagged, and it leads the same list everything else is in. */
+  const list = deduped;
 
   // Bands are computed against one pinned `now`, refreshed on foreground and
   // every 5 minutes — never Date.now() inside the render. A story sitting near
@@ -187,67 +197,23 @@ export default function Home() {
     };
   }, []);
 
-  /* app_get_feed omits `versions`, so For You stories arrive with no tldr and
-     could never qualify as a Pix — the picture-story slot silently degraded to
-     a plain row on the main feed. One small side query fills it in. */
-  const feedIds = useMemo(() => list.map((a) => a.id), [list]);
-  const modes = useQuery({
-    queryKey: ['feedModes', feedIds.join(',')],
-    queryFn: () => fetchModesFor(feedIds),
-    enabled: feedIds.length > 0,
-    staleTime: 10 * 60_000,
-  });
-
-  // one continuous list — older stories stream in via keyset pagination
-  const morePages = useInfiniteQuery({
-    queryKey: ['morePages', tab],
-    queryFn: ({ pageParam }) => fetchFeedPage({ before: pageParam ?? list[list.length - 1]?.publishedAt ?? null, topics: active.topics, limit: 15 }),
-    initialPageParam: null as string | null,
-    getNextPageParam: (last) => (last.length ? last[last.length - 1].publishedAt : undefined),
-    enabled: false, // fetched only when the user taps "More stories"
-  });
-  const older = useMemo(() => {
-    const shownIds = new Set(deduped.map((a) => a.id));
-    const shownTitles = new Set(deduped.map((a) => norm(a.title)));
-    const out: typeof deduped = [];
-    for (const a of morePages.data?.pages.flat() ?? []) {
-      const k = norm(a.title);
-      if (shownIds.has(a.id) || shownTitles.has(k)) continue;
-      shownTitles.add(k);
-      out.push(a);
-    }
-    return out;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [morePages.data, deduped]);
-
-  // Latest is explicitly a recency list once it's banded. For You and Trending
-  // arrive score-ordered, so grouping them as-is would alternate bands and
-  // produce a header per row; sorting first means the ranking decides *which*
-  // stories appear and recency decides the order they appear in.
   /* Compose FIRST, then band.
 
      Doing it the other way round — composing inside each band group — restarts
      the cycle at every header, and since a band run is often only two or three
-     stories, slot 3 is never reached and no Pix or motion card ever appears.
+     stories, slot 3 is never reached and no Pix or video card ever appears.
      One cycle runs across the whole feed and the bands are laid over the top.
-     composeFeed only ever reorders within a six-item lookahead, so the recency
-     sort survives it and the band runs stay clean.
+
+     Note what is *not* here any more: a recency sort before composing. Home
+     used to re-sort the feed by timestamp, which was right when the order
+     arriving was a personalization score and wrong now that it is the desk's
+     running order — sorting would have thrown that away and pushed the featured
+     lead into the middle of the list.
 
      Flattened into one array so the whole thing goes through a single
-     FlatList. Home was a plain ScrollView, so every row ever paged in stayed
-     mounted with its bitmap — roughly sixty cards after three "More stories"
-     taps, which is exactly why it degraded the longer you scrolled. */
+     FlatList. */
   const rows = useMemo(() => {
-    const ts = (a: { publishedAt: string }) => {
-      const t = Date.parse(a.publishedAt ?? '');
-      return Number.isFinite(t) ? t : 0; // undated rows sink, never NaN-sort
-    };
-    const sorted = [...list, ...older]
-      .sort((a, b) => ts(b) - ts(a))
-      // graft on the tldr the personalized RPC doesn't return, so the Pix gate
-      // has something to test against
-      .map((a) => (a.modes ? a : { ...a, modes: modes.data?.[a.id] ?? null }));
-    const composed = composeFeed(sorted);
+    const composed = composeFeed(list);
     const groups = groupByBand(composed, (f) => f.article.publishedAt, bandNow);
 
     const out: FeedRow[] = [];
@@ -267,26 +233,14 @@ export default function Home() {
       });
     });
     return out;
-  }, [list, older, bandNow, modes.data]);
+  }, [list, bandNow]);
 
-  // a short page means the feed is exhausted — stop offering "More stories"
-  const pages = morePages.data?.pages;
-  const exhausted = !!pages && pages.length > 0 && pages[pages.length - 1].length < 15;
-
+  // pulling down must re-read, not re-serve: the selections cache is dropped
+  // first so the refresh cannot be answered from it
   const refetchAll = () => {
-    forYou.refetch();
-    if (tab === 'Trending') trending.refetch();
-    if (active.topics) topical.refetch();
-    breakingTop.refetch();
+    invalidateSelections();
+    return forYou.refetch();
   };
-
-  // slim breaking strip: only when there is a fresh cluster, and never
-  // duplicating the hero
-  const breaking = breakingTop.data?.[0];
-  const showBreaking =
-    !!breaking &&
-    Date.now() - new Date(breaking.detectedAt).getTime() < 12 * 3600_000 &&
-    !carousel.some((a) => a.id === breaking.id);
 
   /* Everything above the feed becomes the list header. It's memoised because
      FlatList re-renders its header whenever the element identity changes, and
@@ -370,82 +324,43 @@ export default function Home() {
         ) : failed && deduped.length === 0 ? (
           <FeedEmpty online={online} onRetry={refetchFeed} />
         ) : (
-          <>
-            {/* top stories carousel */}
-            <View style={s.sectionRow}>
-              <Txt size={17} weight="bold" ls={-0.4}>
-                Top stories
-              </Txt>
-              <Press onPress={() => router.push('/reader')} scaleTo={0.94} style={{ paddingVertical: 4 }}>
-                <Txt size={13} weight="semibold" color={c.brand}>
-                  See All
-                </Txt>
-              </Press>
-            </View>
-            <Animated.ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              snapToInterval={CAROUSEL_STRIDE}
-              decelerationRate="fast"
-              onScroll={onCarouselScroll}
-              scrollEventThrottle={16}
-              contentContainerStyle={{ paddingHorizontal: 24, paddingBottom: 6, paddingTop: 2 }}
-            >
-              {carousel.map((a, i) => (
-                <CarouselCard key={a.id} a={a} index={i} scrollX={carouselX} />
-              ))}
-            </Animated.ScrollView>
+          /* The section heading, and nothing above it.
 
-            {/* one-line breaking strip */}
-            {showBreaking ? (
-              <Animated.View entering={enterContent().delay(duration.instant)}>
-                <Press onPress={() => router.push(`/article/${breaking!.id}`)} style={s.breakingStrip}>
-                  <PulseDot />
-                  <Txt size={13.5} weight="semibold" numberOfLines={1} style={{ flex: 1 }}>
-                    {breaking!.title}
-                  </Txt>
-                  <Txt size={11.5} weight="semibold" color={c.breaking} ls={0.6}>
-                    LIVE
-                  </Txt>
-                </Press>
-              </Animated.View>
-            ) : null}
-
-            {/* the feed — one ranked list */}
-            <View style={[s.sectionRow, { marginTop: 26, marginBottom: 2 }]}>
-              <Txt size={17} weight="bold" ls={-0.4}>
-                Latest
+             A "Top stories" carousel used to sit here, then a breaking strip.
+             Both were ways of picking a lead out of a feed too large to read,
+             and both picked it by score. The lead is an editorial choice now
+             and it is simply the first row. */
+          <View style={[s.sectionRow, { marginTop: 20, marginBottom: 2 }]}>
+            <Txt size={17} weight="bold" ls={-0.4}>
+              {active.topic ?? 'Today'}
+            </Txt>
+            <Press onPress={() => router.push('/reader')} scaleTo={0.94} style={{ paddingVertical: 4 }}>
+              <Txt size={13} weight="semibold" color={c.brand}>
+                Open deck
               </Txt>
-            </View>
-          </>
+            </Press>
+          </View>
         )}
       </>
     ),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [loading, carousel, showBreaking, breaking, tab, isDark, unread.data, dateLabel, failed, online, deduped.length],
+    [loading, tab, isDark, unread.data, dateLabel, failed, online, deduped.length],
   );
 
-  const footer = (
-    <View>
-      {exhausted ? (
-        <Animated.View entering={enterChrome()} style={s.caughtUp}>
-          <Txt size={13.5} weight="semibold" color={c.inkFaint}>
-            That&apos;s everything for now
-          </Txt>
-        </Animated.View>
-      ) : (
-        <Press
-          onPress={() => morePages.fetchNextPage()}
-          scaleTo={0.97}
-          style={[s.moreBtn, { borderColor: isDark ? 'rgba(255,255,255,0.16)' : 'rgba(11,13,18,0.14)' }]}
-        >
-          <Txt size={14} weight="semibold" color={c.inkSoft}>
-            {morePages.isFetchingNextPage ? 'Loading…' : 'More stories'}
-          </Txt>
-        </Press>
-      )}
-    </View>
-  );
+  /* The end of the feed is the end of the feed.
+
+     There was a "More stories" button here that paged deeper into the scraped
+     corpus. There is no deeper: the reader has reached the end of what the desk
+     published today, which is a finished feeling rather than a limitation, and
+     saying so is better than a button that returns nothing. */
+  const footer =
+    deduped.length > 0 ? (
+      <Animated.View entering={enterChrome()} style={s.caughtUp}>
+        <Txt size={13.5} weight="semibold" color={c.inkFaint}>
+          That&apos;s everything for now
+        </Txt>
+      </Animated.View>
+    ) : null;
 
   return (
     <View style={{ flex: 1, backgroundColor: c.bg }}>
@@ -621,15 +536,6 @@ function FeedEmpty({ online, onRetry }: { online: boolean; onRetry: () => void }
   );
 }
 
-function PulseDot() {
-  const v = useSharedValue(1);
-  useEffect(() => {
-    v.value = withRepeat(withSequence(withTiming(0.4, { duration: 700 }), withTiming(1, { duration: 700 })), -1);
-  }, [v]);
-  const a = useAnimatedStyle(() => ({ opacity: v.value }));
-  return <Animated.View style={[s.pulseDot, a]} />;
-}
-
 const s = StyleSheet.create({
   edition: {
     flexDirection: 'row',
@@ -665,15 +571,6 @@ const s = StyleSheet.create({
     paddingVertical: 28,
     marginTop: 8,
   },
-  moreBtn: {
-    marginHorizontal: 24,
-    marginTop: 20,
-    height: 46,
-    borderRadius: 999,
-    borderWidth: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
   sectionRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -688,19 +585,5 @@ const s = StyleSheet.create({
     justifyContent: 'space-between',
     paddingLeft: 24,
     paddingRight: 14,
-  },
-  breakingStrip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    marginHorizontal: 24,
-    marginTop: 16,
-    paddingVertical: 4,
-  },
-  pulseDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: '#FF3B30',
   },
 });

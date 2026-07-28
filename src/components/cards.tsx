@@ -149,7 +149,20 @@ export function TopStoryCard({ a }: { a: Article }) {
 
    Screens that render rows once from a plain map (search, profile) opt back
    in. Anything inside a FlatList must not. */
-export function ArticleRow({
+/* Memoised, and the feed depends on it.
+ *
+ * Home rebuilds its row array whenever anything upstream changes identity — a
+ * 30-second poll of the CMS, a return to the foreground, the five-minute time-
+ * band tick. Without this, each of those re-renders every mounted cell in the
+ * list, and a cell is an image plus an animated container. The device log for
+ * it read "VirtualizedList: large list that is slow to update" with frame
+ * times up to 8.8 seconds.
+ *
+ * react-query's structural sharing keeps `a` referentially stable when the
+ * story itself has not changed, so the comparison below is a pointer check
+ * that skips almost all of that work. The two together are the fix; either
+ * alone does nothing. */
+function ArticleRowBase({
   a,
   showTopic = true,
   index = 0,
@@ -219,6 +232,8 @@ export function ArticleRow({
     </Animated.View>
   );
 }
+
+export const ArticleRow = React.memo(ArticleRowBase);
 
 /* ---------- Carousel story card (GLOBAL-reference style) ---------- */
 

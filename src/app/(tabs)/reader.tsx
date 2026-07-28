@@ -16,21 +16,31 @@ import Animated, {
 } from 'react-native-reanimated';
 import { spring } from '@/theme';
 import { Txt, Press, Shimmer, LIcon, TopicBubble } from '@/components/ui';
-import { fetchReaderFeed, fetchPix } from '@/lib/queries';
+import { fetchReaderFeed, fetchPix, fetchQix, LIVE_QUERY } from '@/lib/queries';
 import { fetchCommentCounts } from '@/lib/comments';
+import { invalidateSelections } from '@/lib/cms';
 import { PixCard } from '@/components/pixCard';
 import { ReelCard } from '@/components/reelCard';
 import { PixPage } from '@/components/pixPage';
 import { PageShell } from '@/components/pageShell';
 import { ReaderCardMemo } from '@/components/readerCard';
-import { TopicWheel, FormatBubble, PIX_FILTER, WHEEL_ITEMS, DRAG_PX } from '@/components/topicDial';
-import { composeFeed, type FeedKind } from '@/lib/feed';
+import {
+  TopicWheel,
+  FormatBubble,
+  PIX_FILTER,
+  VIDEO_FILTER,
+  isFormatFilter,
+  WHEEL_ITEMS,
+  DRAG_PX,
+} from '@/components/topicDial';
+import { setActiveCard } from '@/lib/activeCard';
+import { composeFeed, kindOf } from '@/lib/feed';
 import { NAVBAR_CLEARANCE } from '@/components/navbar';
 import { type Article } from '@/lib/content';
 import { storeActions } from '@/lib/store';
 import { useTheme } from '@/lib/theme';
 import { useNavVisibility } from '@/lib/navVisibility';
-import { track, createDwellTimer, flush as flushTelemetry } from '@/lib/telemetry';
+import { track, createDwellTimer } from '@/lib/telemetry';
 import { bandOf } from '@/lib/timeBands';
 import { noteRead } from '@/lib/progress';
 import { useIsOnline } from '@/lib/network';
@@ -168,69 +178,41 @@ export default function Reader() {
   // Hidden tab screens can measure 0 on web; fall back to the window height.
   const pageH = measuredH > 100 ? measuredH : winH;
   const scrollY = useSharedValue(0);
+  /* One query, three sources. Pix and Video are formats and come from the CMS
+     wholesale; anything else is the approved article set, optionally narrowed
+     to a topic. */
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: ['readerFeed', topicFilter],
     queryFn: () =>
       topicFilter === PIX_FILTER
-        ? fetchPix(40)
-        : fetchReaderFeed(40, topicFilter ? [topicFilter] : undefined),
+        ? fetchPix()
+        : topicFilter === VIDEO_FILTER
+          ? fetchQix()
+          : fetchReaderFeed(topicFilter ? [topicFilter] : undefined),
     // keep the old deck on screen while the new topic loads — otherwise the
     // loading branch unmounts the dial mid-bloom and the tap looks ignored
     placeholderData: (prev: Article[] | undefined) => prev,
+    ...LIVE_QUERY,
   });
-  const [extra, setExtra] = useState<Article[]>([]);
-  const loadingMore = useRef(false);
-  const feedItems = useMemo(() => {
-    const seenIds = new Set((data ?? []).map((a) => a.id));
-    return [...(data ?? []), ...extra.filter((a) => !seenIds.has(a.id))];
-  }, [data, extra]);
+
+  /* Pagination is gone, and its absence is the point.
+     The deck used to page endlessly through the scraped corpus with a keyset
+     cursor. The app's content is now what the desk published — a set small
+     enough to arrive in one response and finite by design. There is no next
+     page to ask for, so nothing asks. */
+  const feedItems = data ?? [];
 
   const commentCounts = useQuery({
-    queryKey: ['commentCounts', (data ?? []).slice(0, 40).map((a) => a.id).join(',')],
-    queryFn: () => fetchCommentCounts((data ?? []).slice(0, 40).map((a) => a.id)),
-    enabled: !!data?.length,
+    queryKey: ['commentCounts', feedItems.map((a) => a.id).join(',')],
+    queryFn: () => fetchCommentCounts(feedItems.map((a) => a.id)),
+    enabled: feedItems.length > 0,
     staleTime: 60_000,
   });
 
-  // the deck as it currently stands, for the pagination cursor — a ref so
-  // loadMore keeps one identity instead of being rebuilt on every append
-  const itemsRef = useRef<Article[]>([]);
-  itemsRef.current = feedItems;
-  const exhausted = useRef(false);
-
   const listRef = useRef<any>(null);
   React.useEffect(() => {
-    setExtra([]);
-    exhausted.current = false;
     listRef.current?.scrollToOffset({ offset: 0, animated: false });
   }, [topicFilter]);
-
-  const loadMore = useCallback(async () => {
-    if (loadingMore.current || exhausted.current) return;
-    loadingMore.current = true;
-    try {
-      await flushTelemetry(); // impressions raise seen_count so the next batch differs
-      const onScreen = itemsRef.current;
-      const next =
-        topicFilter === PIX_FILTER
-          ? // page from the oldest card on screen. Without a cursor this asked
-            // for the same top 40 every time, every row was deduped away, and
-            // the deck stopped dead at 40 cards.
-            await fetchPix(40, undefined, onScreen[onScreen.length - 1]?.publishedAt ?? null)
-          : await fetchReaderFeed(40, topicFilter ? [topicFilter] : undefined);
-      const have = new Set(onScreen.map((a) => a.id));
-      const fresh = next.filter((a) => !have.has(a.id));
-      // a page that adds nothing means the end — stop asking, otherwise every
-      // scroll to the bottom fires another round trip for the same rows
-      if (!fresh.length) exhausted.current = true;
-      else setExtra((prev) => [...prev, ...fresh]);
-    } catch {}
-    loadingMore.current = false;
-    // topicFilter belongs here: without it this closure kept the filter that
-    // was active when it was created, so hitting the end of a deck appended
-    // the *previous* category's articles to it. That is exactly the kind of
-    // cross-category bleed the Pix deck is meant to be free of.
-  }, [data, topicFilter]);
 
   const nav = useNavVisibility();
   // Hiding the nav moved into the scroll handler itself: it used to be an
@@ -305,16 +287,15 @@ export default function Reader() {
   const isPix = topicFilter === PIX_FILTER;
 
   /* For You is the mixed deck: three articles, a picture story, three
-     articles, a motion card, repeating. A named topic stays a pure article
-     deck — you picked that topic to read it, not to be handed formats — and
-     the Pix category stays all-Pix. So the mix only applies to For You. */
+     articles, a video, repeating. composeFeed decides that running order — and
+     only the order. What each card *is* comes from the desk (see lib/feed's
+     kindOf), so a topic deck showing a picture story shows it as one rather
+     than flattening it into a headline. */
   const isMixed = topicFilter === null;
-  const mixedKinds = useMemo(() => {
-    if (!isMixed) return null;
-    const out: Record<string, FeedKind> = {};
-    for (const f of composeFeed(feedItems)) out[f.article.id] = f.kind;
-    return out;
-  }, [isMixed, feedItems]);
+  const pages = useMemo(
+    () => (isMixed ? composeFeed(feedItems).map((f) => f.article) : feedItems),
+    [isMixed, feedItems],
+  );
 
   const renderPage = useCallback(
     ({ item, index }: { item: Article; index: number }) => {
@@ -324,7 +305,7 @@ export default function Reader() {
          getItemLayout stay exactly one screen tall — the deck's paging maths
          depends on every row being pageH, and a shorter card would break the
          snap for everything after it. */
-      const kind = mixedKinds?.[item.id] ?? 'row';
+      const kind = kindOf(item);
       if (kind === 'motion') {
         return (
           <PageShell index={index} pageH={pageH} scrollY={scrollY}>
@@ -359,7 +340,7 @@ export default function Reader() {
     },
     // scrollY is a stable shared value ref
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [isPix, isMixed, mixedKinds, pageH, topInset, counts, bandStarts],
+    [isPix, pageH, topInset, counts, bandStarts],
   );
 
   const getItemLayout = useCallback(
@@ -402,6 +383,8 @@ export default function Reader() {
     if (!first) return;
     const a: Article = first.item;
     if (dwellRef.current?.id === a.id) return;
+    // a video card plays only while it is the card on screen (lib/activeCard)
+    setActiveCard(a.id);
     closeDwell();
     // the tick marks a page landing. The Pix deck scrolls freely — cards drift
     // past rather than snapping — so a haptic per card would just be a rattle.
@@ -472,7 +455,7 @@ export default function Reader() {
       {pageH > 0 ? (
         <Animated.FlatList
           ref={listRef}
-          data={feedItems}
+          data={pages}
           keyExtractor={keyExtractor}
           renderItem={renderPage}
           onScroll={onScroll}
@@ -501,12 +484,10 @@ export default function Reader() {
           onViewableItemsChanged={onViewable}
           viewabilityConfig={VIEWABILITY}
           onRefresh={() => {
-            setExtra([]);
+            invalidateSelections();
             refetch();
           }}
           refreshing={false}
-          onEndReached={loadMore}
-          onEndReachedThreshold={2}
           // a reader card is a whole screen, a Pix card about two-thirds of
           // one — so the Pix deck needs a few more in hand to fill the
           // viewport and keep a fling ahead of the renderer
@@ -527,7 +508,7 @@ export default function Reader() {
       {topicFilter ? (
         <View style={[st.filterTag, { top: insets.top + 58 }]}>
           <Txt size={11.5} weight="bold" color="#fff">
-            {topicFilter === PIX_FILTER ? 'Pix' : topicFilter}
+            {topicFilter === PIX_FILTER ? 'Pix' : topicFilter === VIDEO_FILTER ? 'Video' : topicFilter}
           </Txt>
         </View>
       ) : null}
@@ -576,8 +557,8 @@ export default function Reader() {
                 whole job is to look like the thing that was just tapped */}
             {revealTopic === null ? (
               <FormatBubble kind="foryou" brand={c.brand} />
-            ) : revealTopic === PIX_FILTER ? (
-              <FormatBubble kind="pix" brand={c.brand} />
+            ) : isFormatFilter(revealTopic) ? (
+              <FormatBubble kind={revealTopic === PIX_FILTER ? 'pix' : 'video'} brand={c.brand} />
             ) : (
               <TopicBubble topic={revealTopic} size={92} />
             )}

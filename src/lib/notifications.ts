@@ -2,14 +2,25 @@ import { Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Device from 'expo-device';
 import { supabase } from './supabase';
-import { fetchBreaking, type BreakingItem } from './queries';
+import { type Article } from './content';
 import { getDeviceId } from './telemetry';
 
-// Breaking-news notifications.
-// expo-notifications THROWS ON IMPORT in Expo Go on Android (removed in
-// SDK 53+), so it must be loaded lazily behind a guard. In Expo Go the app
-// still gets the bell screen + unread badge (pure Supabase); local/remote
-// notifications light up automatically in a real dev/EAS build.
+/* Notifications.
+ *
+ * Breaking alerts are off, and the reason is editorial rather than technical.
+ * They were driven by `app_get_breaking`, which finds clusters in the *scraped*
+ * corpus — by definition stories no editor has seen, let alone approved. The
+ * app now shows only what the desk published, so pushing an unapproved story to
+ * someone's lock screen would be the loudest possible way to break that rule.
+ *
+ * What remains is everything below the alert: permissions, the push token
+ * registration, the channel and the tap listener. When the desk gets a way to
+ * mark an item urgent, that is the piece to reconnect — the plumbing is here
+ * and working.
+ *
+ * expo-notifications THROWS ON IMPORT in Expo Go on Android (removed in
+ * SDK 53+), so it must be loaded lazily behind a guard.
+ */
 
 let N: any = null;
 try {
@@ -110,48 +121,24 @@ export function addNotificationTapListener(cb: (articleId: string) => void): { r
   }
 }
 
-// Poll for new breaking stories; fire a local notification for the newest
-// unseen one when the platform allows it. Returns the list for the bell screen.
+export type BreakingItem = Article & { detectedAt: string; sourceCount: number };
+
+/* The bell screen, with nothing behind it.
+ *
+ * Kept as a function rather than deleted along with its callers: the screen,
+ * the badge and the poll are all still wired, and reconnecting them is a matter
+ * of giving this something to return. Deleting it would mean rebuilding three
+ * surfaces to get urgent stories back.
+ */
 export async function checkBreaking(): Promise<{ items: BreakingItem[]; unread: number }> {
-  const items = await fetchBreaking(20);
-  const lastSeen = Number((await AsyncStorage.getItem(LAST_SEEN_KEY)) ?? 0);
-  const lastNotified = Number((await AsyncStorage.getItem(LAST_NOTIFIED_KEY)) ?? 0);
-
-  const unread = items.filter((b) => new Date(b.detectedAt).getTime() > lastSeen).length;
-
-  const fresh = items.filter((b) => new Date(b.detectedAt).getTime() > lastNotified);
-  if (fresh.length > 0) {
-    // The watermark advances whether or not a notification is sent, so turning
-    // alerts back on does not immediately fire one for a story from last week.
-    await AsyncStorage.setItem(LAST_NOTIFIED_KEY, String(Date.now()));
-    if (notifyEnabled && N && (await ensurePermissions())) {
-      try {
-        await N.scheduleNotificationAsync({
-          content: {
-            title: '🔴 Breaking — Daily Mattr',
-            body: fresh[0].title,
-            data: { articleId: fresh[0].id },
-          },
-          trigger: null,
-        });
-      } catch {}
-    }
-  }
-
-  return { items, unread };
+  return { items: [], unread: 0 };
 }
 
 export async function markBreakingSeen(): Promise<void> {
   await AsyncStorage.setItem(LAST_SEEN_KEY, String(Date.now()));
 }
 
-// Badge count only — no notification side effects.
+/** Badge count. Zero until the desk can mark an item urgent. */
 export async function getUnreadBreaking(): Promise<number> {
-  try {
-    const items = await fetchBreaking(20);
-    const lastSeen = Number((await AsyncStorage.getItem(LAST_SEEN_KEY)) ?? 0);
-    return items.filter((b) => new Date(b.detectedAt).getTime() > lastSeen).length;
-  } catch {
-    return 0;
-  }
+  return 0;
 }

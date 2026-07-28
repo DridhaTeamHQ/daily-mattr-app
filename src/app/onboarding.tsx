@@ -16,19 +16,18 @@ import { getDeviceId } from '@/lib/telemetry';
 import { tick, soft } from '@/lib/haptics';
 import { ONBOARDED_KEY, setOnboardedFlag } from '@/lib/onboardingKey';
 import { enterContent, enterItem, enterScreen } from '@/lib/transitions';
+import { CATEGORY_NAMES } from '@/lib/categories';
 
 const { width: W } = Dimensions.get('window');
 const TILE = (W - 56) / 2;
 
-const TOPICS = [
-  'Tech & AI', 'Business', 'Politics', 'India', 'World', 'Sports',
-  'Science', 'Markets & Startups', 'Health & Wellness', 'Automobile',
-  'Real Estate', 'Explained',
-];
+// The desk's categories — picking an interest the app can never serve is worse
+// than not offering it. See lib/categories.
+const TOPICS = CATEGORY_NAMES;
 
 // varied diameters + vertical offsets give the cluster its organic feel
-const BUBBLE_SIZES = [116, 88, 102, 122, 86, 104, 92, 118, 90, 100, 86, 108];
-const BUBBLE_LIFTS = [0, 22, 8, -4, 26, 4, 18, -2, 20, 6, 24, 2];
+const BUBBLE_SIZES = [116, 88, 102, 122, 86, 104, 92, 118];
+const BUBBLE_LIFTS = [0, 22, 8, -4, 26, 4, 18, -2];
 
 export default function Onboarding() {
   const insets = useSafeAreaInsets();

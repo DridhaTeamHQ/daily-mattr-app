@@ -20,6 +20,7 @@ import { Txt, Press, SectionHeader, LIcon, ProgressRing } from '@/components/ui'
 import { ArticleRow } from '@/components/cards';
 import { NAVBAR_CLEARANCE } from '@/components/navbar';
 import { fetchByIds } from '@/lib/queries';
+import { UNCLASSIFIED } from '@/lib/categories';
 import { useStore } from '@/lib/store';
 import { useTheme } from '@/lib/theme';
 import { useProgress, useStreak, weekCounts } from '@/lib/progress';
@@ -83,7 +84,7 @@ export default function Profile() {
   const collections = useMemo(() => {
     const counts: Record<string, number> = {};
     for (const id of saved) {
-      const t = savedTopics[id] ?? 'Explained';
+      const t = savedTopics[id] || UNCLASSIFIED;
       counts[t] = (counts[t] ?? 0) + 1;
     }
     return Object.entries(counts).sort((a, b) => b[1] - a[1]);

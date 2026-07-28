@@ -5,7 +5,7 @@ import { BlurView } from 'expo-blur';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
-import * as WebBrowser from 'expo-web-browser';
+import { hasSource, openSource } from '@/lib/openSource';
 import Animated, {
   Easing,
   Extrapolation,
@@ -86,10 +86,10 @@ function ReaderCard({
   // The masthead is the way to the publisher now. Dragging the card sideways
   // was a hidden affordance competing with the vertical paging, and the logo
   // it revealed is already sitting in the footer being recognised at a glance.
-  const openSource = () => {
-    track({ article_id: a.id, event_type: 'open_full', topic: a.topic });
-    WebBrowser.openBrowserAsync(a.url);
-  };
+  // openBrowserAsync rejects when Android has no browser activity, and a CMS
+  // item with no source_links has no url to open at all — both handled in
+  // lib/openSource rather than at each call site.
+  const canOpen = hasSource(a);
 
   /* Retellings of the same story, swiped through sideways.
 
@@ -411,13 +411,14 @@ function ReaderCard({
           <Press
             haptic={false}
             onPress={() => {
+              if (!canOpen) return;
               tick();
-              openSource();
+              void openSource(a);
             }}
             scaleTo={0.9}
             hitSlop={10}
-            accessibilityRole="link"
-            accessibilityLabel={`Open this story on ${a.publisher}`}
+            accessibilityRole={canOpen ? 'link' : 'text'}
+            accessibilityLabel={canOpen ? `Open this story on ${a.publisher}` : a.publisher}
             style={{ flexDirection: 'row', alignItems: 'center', flexShrink: 1 }}
           >
             <PublisherMark a={a} grad={t.grad} />

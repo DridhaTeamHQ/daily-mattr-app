@@ -2,6 +2,7 @@ import { useSyncExternalStore } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { dayKey, type DayKey } from './day';
 import { normTitle, type Article } from './content';
+import { UNCLASSIFIED } from './categories';
 import { fetchForYou } from './queries';
 import { snapshot as progressSnapshot, subscribe as subscribeProgress } from './progress';
 
@@ -18,7 +19,20 @@ import { snapshot as progressSnapshot, subscribe as subscribeProgress } from './
    articles are re-fetched by id, so an editorial correction still lands, but
    the set and its order cannot move. */
 
-const KEY = 'dailymattr.edition.v1';
+/* v2, because v1 editions hold pipeline ids.
+ *
+ * The edition pins an id list for the day and re-fetches the bodies by id, so
+ * a correction still lands but the set cannot move. That pinning outlived the
+ * cut to the CMS: an edition built before it was drawn from the whole scraped
+ * corpus, and re-fetching those ids by id works perfectly — which is exactly
+ * the problem. Today's edition would keep serving unapproved stories until
+ * midnight, on a device whose feed had otherwise been cleaned.
+ *
+ * The version bump discards them. hydrateEdition also drops any pinned id the
+ * live set no longer contains, so an editor unapproving a story mid-day
+ * removes it from the edition too rather than leaving a card that opens
+ * something no longer published. */
+const KEY = 'dailymattr.edition.v2';
 
 const TARGET = 18;
 const MIN = 12;
@@ -28,7 +42,7 @@ const MAX_PER_TOPIC = 4;
 export type EditionItem = { id: string; topic: string; publishedAt: string };
 
 export type Edition = {
-  version: 1;
+  version: 2;
   day: DayKey;
   builtAt: number;
   items: EditionItem[];
@@ -65,7 +79,7 @@ export async function hydrateEdition(): Promise<void> {
     const raw = await AsyncStorage.getItem(KEY);
     if (raw) {
       const parsed = JSON.parse(raw) as Edition;
-      if (parsed?.version === 1 && Array.isArray(parsed.items)) {
+      if (parsed?.version === 2 && Array.isArray(parsed.items)) {
         edition = parsed;
         status = 'ready';
       }
@@ -104,7 +118,7 @@ export function selectEdition(pool: Article[], now: number, exclude: Set<string>
   const take = (list: Article[]) => {
     for (const a of list) {
       if (out.length >= TARGET) return;
-      const t = a.topic ?? 'Explained';
+      const t = a.topic || UNCLASSIFIED;
       if ((perTopic[t] ?? 0) >= MAX_PER_TOPIC) continue;
       perTopic[t] = (perTopic[t] ?? 0) + 1;
       out.push({ id: a.id, topic: t, publishedAt: a.publishedAt });
@@ -133,7 +147,7 @@ export async function ensureEdition(now: number = Date.now()): Promise<Edition |
 
   building = (async () => {
     try {
-      const pool = await fetchForYou(60);
+      const pool = await fetchForYou();
       const already = new Set(progressSnapshot().recent[today]?.readIds ?? []);
       const items = selectEdition(pool, now, already);
 
@@ -146,7 +160,7 @@ export async function ensureEdition(now: number = Date.now()): Promise<Edition |
         return null;
       }
 
-      edition = { version: 1, day: today, builtAt: now, items, size: items.length, celebratedAt: null };
+      edition = { version: 2, day: today, builtAt: now, items, size: items.length, celebratedAt: null };
       status = 'ready';
       persist();
       emit();
@@ -161,6 +175,31 @@ export async function ensureEdition(now: number = Date.now()): Promise<Edition |
   })();
 
   return building;
+}
+
+/* Drop pinned stories the desk has since taken down.
+ *
+ * The edition is frozen on purpose — that is what makes "12 of 18" mean
+ * anything — but frozen against a *reshuffling ranker*, not against an editor.
+ * If someone unapproves a story at noon, the pinned id keeps resolving and the
+ * edition goes on offering a card that opens something no longer published.
+ *
+ * Removing rather than replacing, and `size` shrinks with the list. It must:
+ * progress is counted as reads against `size`, so keeping the old total after
+ * dropping a story would leave an edition that can never be finished — "17 of
+ * 18 read" with nothing left to read being the caught-up moment that never
+ * fires.
+ */
+export function pruneEdition(liveIds: Set<string>): void {
+  if (!edition || !liveIds.size) return;
+  const kept = edition.items.filter((i) => liveIds.has(i.id));
+  if (kept.length === edition.items.length) return;
+  // never prune to nothing — an empty edition locks the reader out until
+  // midnight, and a stale card is the lesser failure
+  if (!kept.length) return;
+  edition = { ...edition, items: kept, size: kept.length };
+  persist();
+  emit();
 }
 
 export function markCelebrated(at: number = Date.now()): void {

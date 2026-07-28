@@ -42,9 +42,22 @@ SplashScreen.preventAutoHideAsync();
    would otherwise fetch under the stale assumption that it is online. */
 startNetworkWatch();
 
+/* Freshness, now that a newsroom is on the other end.
+ *
+ * `staleTime` was five minutes, which was right when the feed was a scraper
+ * running on a six-hourly cron: nothing could change inside five minutes, so
+ * refetching was waste. It is wrong now. An editor changes a headline and
+ * expects to see it on the phone in their other hand — five minutes of a
+ * served-from-cache answer reads as the app being broken, and no amount of
+ * pulling to refresh fixes it, because a fresh query is never issued.
+ *
+ * Zero means every mount and every return to the foreground re-reads (focus is
+ * wired to AppState in lib/network). Individual queries that genuinely don't
+ * need it — comment counts — still set their own.
+ */
 const queryClient = new QueryClient({
   defaultOptions: {
-    queries: { staleTime: 5 * 60_000, retry: 1, gcTime: 24 * 3600_000 },
+    queries: { staleTime: 0, retry: 1, gcTime: 24 * 3600_000 },
   },
 });
 

@@ -1,11 +1,23 @@
 // Row → Article mapping and text helpers. The DB is read-only for this app.
 
+import { categoryOfTopic } from './categories';
+
 export type ReadingModes = {
   eli5: string | null;
   tldr: string[] | null;
   keyNumbers: string[] | null;
   deepDive: string | null;
 };
+
+/* What a card *is*, decided by the desk rather than inferred from the row.
+
+   The app used to work this out for itself: a story with a photo and three
+   bullets became a picture story, anything with a photo could become a motion
+   card. That guess is why readers saw "pix" nobody had made — the format was a
+   property of the data being lucky, not of an editor's choice. The CMS models
+   the three formats explicitly (`content_items.kind`), so the app carries the
+   answer instead of deriving it. */
+export type Format = 'article' | 'pix' | 'qix';
 
 export type Article = {
   id: string;
@@ -22,6 +34,12 @@ export type Article = {
   readMins: number;
   wordCount: number;
   modes: ReadingModes | null;
+  format: Format;
+  /** The desk's hero flag (`article_selections.is_featured`) — leads the feed. */
+  featured: boolean;
+  /** Qix only: the clip itself, and how long it runs. */
+  mediaUrl?: string | null;
+  durationSec?: number | null;
   score?: number; // personalization score from app_get_feed
   sim?: number; // similarity to the user's taste vector, 0..1
 };
@@ -29,8 +47,8 @@ export type Article = {
 export const ARTICLE_COLS =
   'id,title,edited_title,summary,edited_summary,source,topic,url,image_url,prominence,rank_score,fact_label,scraped_at,reviewed_at';
 
-// `Technology` and `Tech & AI` are the same thing to a reader.
-const TOPIC_ALIAS: Record<string, string> = { Technology: 'Tech & AI' };
+// Topics fold into the desk's eight categories — see lib/categories. The old
+// one-off alias here (`Technology` → `Tech & AI`) is part of that map now.
 
 // `source` holds RSS feed names, not publishers.
 const PUBLISHER_MAP: [RegExp, string][] = [
@@ -103,14 +121,13 @@ export function mapArticle(row: any): Article {
   const summary = cleanText(row.edited_summary ?? row.summary);
   const body: string | null = row.raw_content ? cleanText(row.raw_content) : null;
   const words = (body ?? summary).split(/\s+/).length;
-  const rawTopic = row.topic ?? 'Explained';
   return {
     id: row.id,
     title: cleanText(row.edited_title ?? row.title),
     summary,
     body,
     url: row.url,
-    topic: TOPIC_ALIAS[rawTopic] ?? rawTopic,
+    topic: categoryOfTopic(row.topic),
     publisher: publisherOf(row.source),
     imageUrl: row.image_url ?? null,
     publishedAt: row.reviewed_at ?? row.scraped_at,
@@ -119,6 +136,10 @@ export function mapArticle(row: any): Article {
     readMins: Math.max(1, Math.round(words / 220)),
     wordCount: summary.split(/\s+/).length,
     modes: mapModes(row.versions),
+    // A pipeline row is always a plain story. Pix and Qix are authored in the
+    // CMS; `featured` is the desk's flag and is applied by applyOverride.
+    format: 'article',
+    featured: false,
     score: typeof row.score === 'number' ? row.score : undefined,
     sim: typeof row.sim === 'number' ? row.sim : undefined,
   };

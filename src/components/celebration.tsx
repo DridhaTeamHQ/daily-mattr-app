@@ -85,7 +85,7 @@ export function CelebrationHost() {
     queryFn: async () => {
       const [read, pool] = await Promise.all([
         fetchArticlesWithModes(todayIds),
-        fetchQuizPool(150),
+        fetchQuizPool(),
       ]);
       return { read, pool };
     },

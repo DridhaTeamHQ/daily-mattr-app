@@ -1,5 +1,4 @@
 import { applyOverride, isCmsId, bareCmsId, CMS_PREFIX, type Selection } from '../cms';
-import { mergeByRecency } from '../feed';
 import { article } from './helpers';
 
 const sel = (over: Partial<Selection> = {}): Selection => ({
@@ -50,6 +49,17 @@ describe('editorial overrides', () => {
     expect(applyOverride(a, sel())).toBe(a);
     expect(applyOverride(a, undefined)).toBe(a);
   });
+
+  /* The hero slot lives on the selection, not on the pipeline row, so it can
+     only reach the reader through here. */
+  it("carries the desk's featured flag onto the story", () => {
+    expect(applyOverride(article(), sel({ isFeatured: true })).featured).toBe(true);
+  });
+
+  it('clears the flag again when the desk unfeatures a story', () => {
+    const a = article({ featured: true });
+    expect(applyOverride(a, sel({ isFeatured: false })).featured).toBe(false);
+  });
 });
 
 describe('cms ids', () => {
@@ -61,32 +71,3 @@ describe('cms ids', () => {
   });
 });
 
-describe('merging the desk into the ranked feed', () => {
-  const at = (iso: string, id: string) => article({ id, publishedAt: iso });
-
-  it('places an authored item among stories of its own age, not at the end', () => {
-    const ranked = [
-      at('2026-07-26T12:00:00.000Z', 'p1'),
-      at('2026-07-26T08:00:00.000Z', 'p2'),
-      at('2026-07-26T04:00:00.000Z', 'p3'),
-    ];
-    const authored = [at('2026-07-26T10:00:00.000Z', 'cms:c1')];
-    expect(mergeByRecency(ranked, authored).map((a) => a.id)).toEqual(['p1', 'cms:c1', 'p2', 'p3']);
-  });
-
-  it('leads the feed when it is the newest thing published', () => {
-    const ranked = [at('2026-07-26T08:00:00.000Z', 'p1')];
-    const authored = [at('2026-07-26T20:00:00.000Z', 'cms:c1')];
-    expect(mergeByRecency(ranked, authored)[0].id).toBe('cms:c1');
-  });
-
-  it('leaves the ranked feed untouched when the desk has published nothing', () => {
-    const ranked = [at('2026-07-26T08:00:00.000Z', 'p1')];
-    expect(mergeByRecency(ranked, [])).toBe(ranked);
-  });
-
-  it('does not double an item already present', () => {
-    const dup = at('2026-07-26T08:00:00.000Z', 'cms:c1');
-    expect(mergeByRecency([dup], [dup])).toHaveLength(1);
-  });
-});

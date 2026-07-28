@@ -10,7 +10,7 @@ import type { Band } from '@/lib/timeBands';
    is the weight "Top stories" and "Latest" carry. A time band sits *under*
    those, so it uses Overline (11pt, uppercase, ls 1.4) and leans on the
    hairline rule to read as structure rather than as a stray caption. */
-export function TimeBandHeader({
+function TimeBandHeaderBase({
   band,
   count,
   first,
@@ -35,6 +35,10 @@ export function TimeBandHeader({
     </View>
   );
 }
+
+/* Memoised: a feed cell must not re-render because the list array was rebuilt.
+   See the note on ArticleRow in components/cards.tsx. */
+export const TimeBandHeader = React.memo(TimeBandHeaderBase);
 
 const s = StyleSheet.create({
   row: {

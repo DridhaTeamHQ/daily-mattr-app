@@ -10,7 +10,7 @@ import { colors, font, radius, topicOf } from '@/theme';
 import { useTheme } from '@/lib/theme';
 import { Txt, Press, IconButton, LIcon } from '@/components/ui';
 import { ArticleRow } from '@/components/cards';
-import { searchSemantic, fetchTrending } from '@/lib/queries';
+import { searchArticles, fetchSuggestions } from '@/lib/queries';
 import { enterItem, enterChrome } from '@/lib/transitions';
 
 const SUGGESTIONS = ['AI', 'Elections', 'Markets', 'Startups', 'Cricket', 'Space', 'EV'];
@@ -56,18 +56,24 @@ export default function Search() {
     AsyncStorage.removeItem(RECENT_KEY);
   };
 
-  const { data: sr, isFetching } = useQuery({
+  /* Searching what is live, not what was scraped.
+
+     This was a semantic query against the pipeline's embeddings, with a
+     keyword fallback — both of which search the whole scraped corpus and would
+     hand back a story no editor approved. Over a feed this size a substring
+     match is instant and, more to the point, cannot return something that
+     isn't in the app. */
+  const { data, isFetching } = useQuery({
     queryKey: ['search', q],
-    queryFn: () => searchSemantic(q),
+    queryFn: () => searchArticles(q),
     enabled: q.length >= 2,
   });
-  const data = sr?.results;
 
   useEffect(() => {
     if (q.length >= 2 && !isFetching && (data ?? []).length > 0) remember(q);
   }, [q, isFetching, data, remember]);
 
-  const trending = useQuery({ queryKey: ['trending'], queryFn: () => fetchTrending(6) });
+  const trending = useQuery({ queryKey: ['suggestions'], queryFn: () => fetchSuggestions(6) });
 
   return (
     <View style={{ flex: 1, backgroundColor: c.bg, paddingTop: insets.top + 8 }}>

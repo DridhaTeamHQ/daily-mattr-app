@@ -1,5 +1,6 @@
 import { mapArticle, mapModes, hasAiSummary, cleanText, publisherOf, normTitle, isBreaking, timeAgo, spokenAge, cardLabel } from '../content';
 import { factBadge } from '../factLabel';
+import { CATEGORY_NAMES, UNCLASSIFIED } from '../categories';
 import { article } from './helpers';
 
 describe('cleanText', () => {
@@ -74,8 +75,47 @@ describe('mapArticle', () => {
     expect(a.summary).toBe('Edited s');
   });
 
-  it('aliases Technology to the reader-facing topic name', () => {
-    expect(mapArticle({ id: '1', title: 't', summary: 's', topic: 'Technology', url: 'u', scraped_at: '2026-07-26T00:00:00Z' }).topic).toBe('Tech & AI');
+  /* A pipeline row arrives under the scraper's taxonomy and has to leave under
+     the desk's — see lib/categories. Done here, at the mapping boundary, so
+     nothing downstream ever sees a category an editor could not have chosen. */
+  const topicOf = (topic: string) =>
+    mapArticle({ id: '1', title: 't', summary: 's', topic, url: 'u', scraped_at: '2026-07-26T00:00:00Z' }).topic;
+
+  it('keeps a topic that is already one of the desk\'s categories', () => {
+    expect(topicOf('India')).toBe('India');
+    expect(topicOf('Sports')).toBe('Sports');
+  });
+
+  it('folds both of the pipeline\'s technology topics into one category', () => {
+    expect(topicOf('Technology')).toBe('Technology');
+    expect(topicOf('Tech & AI')).toBe('Technology');
+  });
+
+  it('files the pipeline\'s business-page topics under Business', () => {
+    for (const t of ['Automobile', 'Real Estate', 'Markets & Startups', 'Corporate Case']) {
+      expect(topicOf(t)).toBe('Business');
+    }
+  });
+
+  it('files health with science, as a newsroom would', () => {
+    expect(topicOf('Health & Wellness')).toBe('Science');
+  });
+
+  /* "Explained" is a format, not a subject, and there is no category for it.
+     It must not become a browsable heading nobody chose — the dial only ever
+     offers the eight. */
+  it('leaves a story with no real category unclassified', () => {
+    expect(topicOf('Explained')).toBe(UNCLASSIFIED);
+    expect(topicOf('')).toBe(UNCLASSIFIED);
+    expect(topicOf('Something Invented')).toBe(UNCLASSIFIED);
+  });
+
+  it('never produces a category outside the desk\'s list, plus unclassified', () => {
+    const allowed = new Set([...CATEGORY_NAMES, UNCLASSIFIED]);
+    const pipelineTopics = ['Politics', 'India', 'Business', 'World', 'Automobile', 'Tech & AI',
+      'Real Estate', 'Sports', 'Health & Wellness', 'Markets & Startups', 'Science', 'Technology',
+      'Explained', 'Corporate Case'];
+    for (const t of pipelineTopics) expect(allowed.has(topicOf(t))).toBe(true);
   });
 
   it('publishes at reviewed_at when present, scraped_at otherwise', () => {

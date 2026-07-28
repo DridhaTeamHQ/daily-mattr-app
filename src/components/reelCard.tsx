@@ -15,6 +15,7 @@ import Animated, {
   withSequence,
   withTiming,
 } from 'react-native-reanimated';
+import { useVideoPlayer, VideoView } from 'expo-video';
 import { radius, topicOf } from '@/theme';
 import { useTheme } from '@/lib/theme';
 import { Txt, Press, LIcon, EasedScrim, BreakingBadge } from './ui';
@@ -27,27 +28,43 @@ import { artFor } from '@/lib/topicArt';
 import { publisherMark } from '@/lib/publisherLogo';
 import { useNavVisibility } from '@/lib/navVisibility';
 import { useMotionAllowed } from '@/lib/motion';
+import { useIsActiveCard } from '@/lib/activeCard';
+import { playbackFor, clipLength } from '@/lib/media';
+import { YoutubeEmbed } from './youtubeEmbed';
+import { openSource } from '@/lib/openSource';
 import { tick, soft, save as saveHaptic } from '@/lib/haptics';
 import { enterChrome } from '@/lib/transitions';
 
 /* The full-screen slot in the mixed deck — Reels/TikTok shape.
 
-   What plays is the story's own photograph on a slow push-in, not stock
-   footage. The articles table has no video column and Supabase is read-only,
-   so a real clip could only ever be unrelated footage sitting under a real
-   headline, which reads as filler in a news product. Every pixel here belongs
-   to the story it links to, and the loop plus the sweeping progress line give
-   the slot the cadence of a video without pretending to be one.
+   This card used to be a *simulated* video: the story's own photograph on a
+   nine-second Ken Burns loop under a playhead that swept regardless, because
+   the pipeline had no video and stock footage under a real headline reads as
+   filler in a news product.
 
-   Cost: two shared values, both driving transforms only. Transforms are
-   composited off the main thread and never trigger a layout pass, so a reel
-   that is mounted but scrolled past is close to free. */
+   The CMS publishes actual clips (Qix), so the card plays them. What it will
+   not do is fake the difference. Four states, and each looks like what it is:
+
+     file    — a clip the video player can open. Plays muted and looping, and
+               the playhead reflects where the clip actually is.
+     youtube — a Short. Not a file, so no player can open it; YouTube's own
+               player runs inside the card instead (see youtubeEmbed), cropped
+               to fill the frame rather than letterboxed into it.
+     link    — something else entirely. The cover holds still under a play
+               button that hands the reader out to it.
+     none    — no usable media. A photograph, treated as one.
+
+   Cost: the animation drivers are transforms only, composited off the main
+   thread with no layout pass, so a card that is mounted but scrolled past is
+   close to free — and its player is paused, see lib/activeCard. */
 
 const DURATION = 9000;
+/** how often the playhead reads the clip's real position */
+const TICK_MS = 250;
 /** everything sits above the floating navbar */
 const FLOOR = NAVBAR_CLEARANCE;
 
-export function ReelCard({
+function ReelCardBase({
   a,
   height,
   topInset,
@@ -84,13 +101,57 @@ export function ReelCard({
      is a lie about what the card is doing. */
   const motion = useMotionAllowed();
 
+  /* What this card actually has to show. */
+  const pb = useMemo(() => playbackFor(a.mediaUrl), [a.mediaUrl]);
+  const length = clipLength(a.durationSec);
+  const isVideo = pb.kind === 'file';
+  const isYoutube = pb.kind === 'youtube';
+  // anything that moves — used to decide whether the still's Ken Burns pan and
+  // the topic wash belong on this card at all
+  const isMoving = isVideo || isYoutube;
+
+  /* Only the card the reader is on plays. Everything else in the deck's window
+     is mounted, paused, and silent. */
+  const onScreen = useIsActiveCard(a.id);
+
+  /* Muted until asked. A feed that starts talking the moment it is scrolled
+     past is the fastest way to make someone close the app — and autoplay is
+     refused outright by every mobile player unless the video is silent. The
+     speaker in the corner is how the reader asks. */
+  const [muted, setMuted] = useState(true);
+
+  const player = useVideoPlayer(isVideo ? pb.url : null, (p) => {
+    p.loop = true;
+    p.muted = true;
+  });
+
+  useEffect(() => {
+    if (!isVideo) return;
+    try {
+      player.muted = muted;
+    } catch {}
+  }, [isVideo, muted, player]);
+
+  useEffect(() => {
+    if (!isVideo) return;
+    try {
+      if (onScreen) player.play();
+      else player.pause();
+    } catch {
+      // the player can be released mid-swipe as the deck recycles the page;
+      // there is nothing to recover, and nothing worth reporting
+    }
+  }, [isVideo, onScreen, player]);
+
   // Ken Burns. Reversing, so it breathes rather than snapping back to the top
-  // of the loop every nine seconds.
+  // of the loop every nine seconds. Only for stills — a clip has its own motion
+  // and panning it as well would be two things moving at once.
   const ken = useSharedValue(0);
   // The playhead. Separate driver because it must NOT reverse — a progress
   // line that runs backwards reads as a scrub, not playback.
   const play = useSharedValue(0);
   useEffect(() => {
+    if (isMoving) return;
     if (!motion) {
       // a fixed point in the pan, so the crop still looks composed rather than
       // parked at the extreme of a range it never travels
@@ -102,8 +163,35 @@ export function ReelCard({
       -1,
       true,
     );
-    play.value = withRepeat(withTiming(1, { duration: DURATION, easing: Easing.linear }), -1, false);
-  }, [ken, play, motion]);
+  }, [ken, motion, isMoving]);
+
+  /* The playhead, for a clip, is the clip's own position.
+
+     The old card swept this line on a fixed nine-second timer whatever was
+     underneath it. Over a real video that would be a lie the reader can check:
+     the line finishing while the clip is halfway through. Polled rather than
+     driven by an event, because `timeUpdate` fires far more often than a
+     progress line needs and every one of those crossings costs a bridge hop. */
+  useEffect(() => {
+    if (!isVideo || !onScreen) {
+      play.value = 0;
+      return;
+    }
+    const id = setInterval(() => {
+      try {
+        const total = player.duration || Number(a.durationSec) || 0;
+        if (total > 0) {
+          play.value = withTiming(Math.min(1, player.currentTime / total), {
+            duration: TICK_MS,
+            easing: Easing.linear,
+          });
+        }
+      } catch {
+        // released mid-poll; the next mount starts a fresh interval
+      }
+    }, TICK_MS);
+    return () => clearInterval(id);
+  }, [isVideo, onScreen, player, play, a.durationSec]);
 
   const kenStyle = useAnimatedStyle(() => ({
     transform: [
@@ -152,6 +240,8 @@ export function ReelCard({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [a.id, liked]);
 
+  // artFor is the topic's own artwork — the honest stand-in when the desk gave
+  // the clip no cover, or gave it one that isn't an image (lib/cms nulls those)
   const src = a.imageUrl ? { uri: a.imageUrl } : artFor(a.topic);
   const mark = publisherMark(a.url);
 
@@ -160,15 +250,36 @@ export function ReelCard({
       {/* --- media, and the only thing the tap recogniser covers --- */}
       <GestureDetector gesture={taps}>
         <View style={StyleSheet.absoluteFill}>
-          <Animated.View style={[StyleSheet.absoluteFill, kenStyle]}>
-            <Image
-              source={src}
+          {isVideo ? (
+            <VideoView
+              player={player}
               style={StyleSheet.absoluteFill}
               contentFit="cover"
-              recyclingKey={a.id + '-reel'}
-              transition={340}
+              // the deck owns the gesture and the chrome; the player provides
+              // neither, so nothing of its own competes with the card
+              nativeControls={false}
+              allowsPictureInPicture={false}
             />
-          </Animated.View>
+          ) : isYoutube ? (
+            <YoutubeEmbed
+              videoId={pb.videoId}
+              poster={a.imageUrl}
+              muted={muted}
+              // mounted only while this is the card on screen, so the deck
+              // never holds several webviews each running a player
+              playing={onScreen}
+            />
+          ) : (
+            <Animated.View style={[StyleSheet.absoluteFill, kenStyle]}>
+              <Image
+                source={src}
+                style={StyleSheet.absoluteFill}
+                contentFit="cover"
+                recyclingKey={a.id + '-reel'}
+                transition={340}
+              />
+            </Animated.View>
+          )}
           {/* the topic's own colour washes the frame so two reels in a row
               don't read as the same slot twice */}
           <LinearGradient colors={[t.wash, 'rgba(0,0,0,0)']} style={StyleSheet.absoluteFill} />
@@ -180,8 +291,32 @@ export function ReelCard({
       {/* the double-tap heart, over the media and under the chrome */}
       {burst > 0 ? <TapHeart key={burst} color={c.breaking} /> : null}
 
-      {/* --- playhead, only when there is something to play --- */}
-      {motion ? (
+      {/* --- the clip lives elsewhere: hand it over rather than fake it ---
+
+          A YouTube Short is a page. Embedding it would mean shipping a webview
+          to render someone else's player inside ours, ads and all; opening it
+          is both more honest and better for the reader. */}
+      {pb.kind === 'link' ? (
+        <View style={st.playWrap} pointerEvents="box-none">
+          <Press
+            haptic={false}
+            scaleTo={0.9}
+            onPress={() => {
+              tick();
+              void openSource({ id: a.id, url: pb.url, topic: a.topic });
+            }}
+            accessibilityRole="button"
+            accessibilityLabel={`Play ${a.title}`}
+            style={st.playBtn}
+          >
+            <LIcon name="play" size={26} color="#fff" strokeWidth={2.6} />
+          </Press>
+        </View>
+      ) : null}
+
+      {/* --- playhead. Only over a clip that is genuinely playing: a progress
+              line above a still photograph is a claim the card can't back. --- */}
+      {isVideo && motion ? (
         <View style={[st.track, { top: topInset + 6 }]}>
           <Animated.View style={[st.fill, { width: winW }, playStyle]} />
         </View>
@@ -201,10 +336,38 @@ export function ReelCard({
         )}
         <View style={st.pill}>
           <Txt size={11.5} weight="medium" color="#fff">
-            {timeAgo(a.publishedAt)}
+            {length ?? timeAgo(a.publishedAt)}
           </Txt>
         </View>
       </View>
+
+      {/* --- sound.
+
+          Its own layer rather than a third pill in the row above, because that
+          row is pointerEvents="none" so the double-tap-to-like underneath it
+          never loses a race to a label. Left of the topics button, which owns
+          the right edge. */}
+      {isMoving ? (
+        <Press
+          haptic={false}
+          hitSlop={10}
+          scaleTo={0.88}
+          onPress={() => {
+            tick();
+            setMuted((m) => !m);
+          }}
+          accessibilityRole="button"
+          accessibilityLabel={muted ? 'Turn sound on' : 'Turn sound off'}
+          style={[st.sound, { top: topInset + 16 }]}
+        >
+          <LIcon
+            name={muted ? 'volume-off' : 'volume-2'}
+            size={15}
+            color="#fff"
+            strokeWidth={2.3}
+          />
+        </Press>
+      ) : null}
 
       {/* --- action rail --- */}
       <View style={[st.rail, { bottom: FLOOR + 6 }]}>
@@ -313,6 +476,11 @@ export function ReelCard({
   );
 }
 
+/* Memoised: the deck keeps a window of pages mounted either side of the
+   visible one. Without this, a state change on the screen re-renders all of
+   them — and each holds a player or a full-bleed image. */
+export const ReelCard = React.memo(ReelCardBase);
+
 /* One rail button: glass circle, word underneath. The label is not decoration
    — without it a column of five outlined glyphs over a photograph is genuinely
    ambiguous, and the two that matter most here (dislike, save) are the two
@@ -411,6 +579,43 @@ const st = StyleSheet.create({
     backgroundColor: 'rgba(255,255,255,0.22)',
   },
   fill: { height: 2.5, backgroundColor: 'rgba(255,255,255,0.92)' },
+  /* Centred on the media, not on the page: the caption and rail occupy the
+     lower third, and a play button sitting behind them reads as unpressable
+     even where it isn't. */
+  sound: {
+    position: 'absolute',
+    // clears the floating topics button, which sits at the right edge
+    right: 66,
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(11,13,18,0.46)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.22)',
+  },
+  playWrap: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  playBtn: {
+    width: 74,
+    height: 74,
+    borderRadius: 37,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(11,13,18,0.44)',
+    borderWidth: 1.5,
+    borderColor: 'rgba(255,255,255,0.5)',
+    // nudged so the optical centre of a triangle lands on the true centre
+    paddingLeft: 4,
+  },
   top: {
     position: 'absolute',
     left: 20,

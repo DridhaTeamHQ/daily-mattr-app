@@ -39,7 +39,7 @@ const GUTTER = 24;
    the card sits on the ambient backdrop the page provides (see PixPage in
    app/(tabs)/reader.tsx). The old version sat on the raw canvas, which meant a
    dark object stranded in the middle of a blank white sheet. */
-export function PixCard({
+function PixCardBase({
   a,
   index = 0,
   variant = 'list',
@@ -264,6 +264,10 @@ export function PixCard({
     </Animated.View>
   );
 }
+
+/* Memoised: a feed cell must not re-render because the list array was rebuilt.
+   See the note on ArticleRow in components/cards.tsx. */
+export const PixCard = React.memo(PixCardBase);
 
 /* Glass circle with a hairline ring, and a pop when it lights.
 

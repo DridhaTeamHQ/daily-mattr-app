@@ -13,6 +13,13 @@ import { sentencesOf } from './sentences';
    was that it interrupted a scan-able list unpredictably. A beat you can feel
    is the difference between a mixed feed and a jumbled one.
 
+   What changed with the CMS: the format is no longer this module's decision.
+   It used to *promote* a story into the Pix slot if the story happened to have
+   a photo and three bullets, which is how the app came to show picture stories
+   nobody had made. Now a card renders as whatever the desk published it as,
+   and this module only decides the *order* they appear in — placing each
+   authored format on the beat where it reads best, and never inventing one.
+
    Pure and deterministic: same articles in, same feed out. That is what makes
    it testable offline against real data. */
 
@@ -27,9 +34,6 @@ export type FeedItem = {
 const CYCLE = 8;
 const PIX_SLOT = 3;
 const MOTION_SLOT = 7;
-
-/** How far ahead we'll look for a story that can carry a given format. */
-const LOOKAHEAD = 6;
 
 /* The three lines on a Pix card's second slide.
 
@@ -63,14 +67,9 @@ export function pixPoints(a: Article): string[] {
   return out.slice(0, POINTS);
 }
 
-/** A Pix needs a photo and three points it can actually show. */
-export function isPixEligible(a: Article): boolean {
-  return !!a.imageUrl && pixPoints(a).length >= POINTS;
-}
-
-/** A motion card is the story's own photo, slowly moving. It just needs one. */
-export function isMotionEligible(a: Article): boolean {
-  return !!a.imageUrl;
+/** The card a story is published as. Motion is the app's name for a Qix. */
+export function kindOf(a: Article): FeedKind {
+  return a.format === 'pix' ? 'pix' : a.format === 'qix' ? 'motion' : 'row';
 }
 
 export function composeFeed(articles: Article[]): FeedItem[] {
@@ -82,53 +81,39 @@ export function composeFeed(articles: Article[]): FeedItem[] {
     const pos = slot % CYCLE;
     const want: FeedKind = pos === PIX_SLOT ? 'pix' : pos === MOTION_SLOT ? 'motion' : 'row';
 
-    if (want === 'row') {
-      const a = queue.shift()!;
-      out.push({ key: a.id, kind: 'row', article: a });
-      slot++;
-      continue;
-    }
+    /* Pull the next card of the format this slot wants, from anywhere in the
+       queue; if there is none left, spend the slot on whatever is next and
+       render it as what it actually is.
 
-    /* Promote the nearest story that can carry the format rather than settling
-       for whichever one happens to land on the slot. Without this the cadence
-       collapses on any day where the ranked order puts photo-less stories at
-       positions 3 and 7 — and the whole point is that the beat is reliable.
-       Bounded by LOOKAHEAD so it can't reach far enough to visibly scramble
-       the ranking. */
-    const test = want === 'pix' ? isPixEligible : isMotionEligible;
-    const found = queue.findIndex((a, i) => i < LOOKAHEAD && test(a));
-
-    // nothing nearby can carry it — spend the slot on a plain row and move on,
-    // rather than stalling the cycle or shipping a broken card
+       This used to be bounded to a six-item lookahead, back when the queue was
+       a ranked list of scraped stories and reaching further would have visibly
+       scrambled the ranking. It arrives sorted differently now — the desk's
+       approved stories in running order, then its pix and qix — so a bounded
+       search would never see past the articles, and the feed would read as a
+       dozen headlines followed by every picture story in a row. Articles hold
+       their order either way; the formats have no position of their own to
+       lose. */
+    const found = queue.findIndex((a) => kindOf(a) === want);
     const a = queue.splice(found >= 0 ? found : 0, 1)[0];
-    out.push({ key: a.id, kind: found >= 0 ? want : 'row', article: a });
+    out.push({ key: a.id, kind: kindOf(a), article: a });
     slot++;
   }
 
   return out;
 }
 
-/* CMS items join the ranked feed on published time.
+/* The desk's hero slot.
 
-   Not appended, not given a fixed slot: an item a writer published an hour ago
-   belongs among the stories from an hour ago. Ranking still decides the order of
-   pipeline stories among themselves — this only decides where the desk's work
-   lands relative to them.
+   `is_featured` in the CMS is described as exactly that, and the app honours it
+   the simplest way there is: the featured stories lead, everything else keeps
+   the order it arrived in. A stable partition, not a sort — two featured
+   stories stay in approval order relative to each other.
 
-   Pure, like the rest of this module, so the rule can be tested against fixed
-   timestamps rather than against whatever the feed happens to hold today. */
-export function mergeByRecency(ranked: Article[], authored: Article[]): Article[] {
-  if (!authored.length) return ranked;
-  const seen = new Set(ranked.map((a) => a.id));
-  const fresh = authored.filter((a) => !seen.has(a.id));
-  if (!fresh.length) return ranked;
-
-  const at = (a: Article) => new Date(a.publishedAt).getTime() || 0;
-  const out = [...ranked];
-  for (const item of fresh) {
-    const i = out.findIndex((a) => at(a) < at(item));
-    if (i === -1) out.push(item);
-    else out.splice(i, 0, item);
-  }
-  return out;
+   Deliberately not a carousel. Home used to open on six big picture cards
+   chosen by the pipeline's own prominence score, which is to say chosen by
+   nobody; a lead story is an editorial decision and now reads as one — the top
+   of the same list everything else is in. */
+export function featuredFirst(list: Article[]): Article[] {
+  if (!list.some((a) => a.featured)) return list;
+  return [...list.filter((a) => a.featured), ...list.filter((a) => !a.featured)];
 }

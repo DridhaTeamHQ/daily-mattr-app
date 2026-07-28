@@ -40,11 +40,18 @@ export function shouldPersist(query: Query): boolean {
    thinking about size. */
 const MAX_CHARS = 1_200_000;
 
-/* A new key, so the oversized row already sitting on every existing install is
-   never read — reading it is the thing that throws. It is deleted below by
-   name instead, which needs no read. */
-const KEY = 'dailymattr.rq.v3';
-const LEGACY_KEYS = ['REACT_QUERY_OFFLINE_CACHE', 'dailymattr.rq.v2'];
+/* A new key on every change of what the cache can legitimately hold.
+ *
+ * v3 existed because an oversized row was sitting on installs and reading it
+ * was what threw. v4 is a content change rather than a size one: every cached
+ * feed under v3 was drawn from the pipeline's whole corpus, and the app now
+ * shows only what the desk approved. Keeping the old key would restore that
+ * corpus on first launch — the reader would open the app, see the old stories
+ * one last time, and watch them vanish on refresh. The old rows are deleted by
+ * name below, which needs no read.
+ */
+const KEY = 'dailymattr.rq.v4';
+const LEGACY_KEYS = ['REACT_QUERY_OFFLINE_CACHE', 'dailymattr.rq.v2', 'dailymattr.rq.v3'];
 
 /* Refuse to write a row that cannot be read back.
 

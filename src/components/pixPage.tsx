@@ -20,7 +20,7 @@ import type { Article } from '@/lib/content';
    Deliberately dark in BOTH themes. The card itself is a dark surface, so a
    light page would have to fight it, and the tonal jump on the way in is what
    tells you the deck has changed format — the same job an interstitial does. */
-export function PixPage({
+function PixPageBase({
   a,
   height,
   commentCount,
@@ -66,6 +66,11 @@ export function PixPage({
     </View>
   );
 }
+
+/* Memoised: the deck keeps a window of pages mounted either side of the
+   visible one. Without this, a state change on the screen re-renders all of
+   them — and each holds a player or a full-bleed image. */
+export const PixPage = React.memo(PixPageBase);
 
 const st = StyleSheet.create({
   pixPage: { flex: 1 },
