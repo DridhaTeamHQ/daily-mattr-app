@@ -2,11 +2,20 @@
 
 import { categoryOfTopic } from './categories';
 
+/* The retellings a card can offer, and deliberately not `deep_dive`.
+ *
+ * The pipeline writes four; the app renders three. Each of these is *shorter*
+ * than the summary it sits beside — that is what lets them work on a
+ * line-clamped card. The deep dive is the one that is longer, so it arrived
+ * pre-truncated on the single mode whose whole promise is more to read.
+ *
+ * Dropped from the model rather than just hidden in the reader: a field that
+ * is parsed, mapped, cached to disk and shipped to every device, and then
+ * rendered nowhere, is the kind of thing that gets re-added by accident. */
 export type ReadingModes = {
   eli5: string | null;
   tldr: string[] | null;
   keyNumbers: string[] | null;
-  deepDive: string | null;
 };
 
 /* What a card *is*, decided by the desk rather than inferred from the row.
@@ -108,13 +117,13 @@ export function mapModes(v: any): ReadingModes | null {
     return out.length ? out : null;
   };
   const str = (x: any): string | null => (typeof x === 'string' && x.trim() ? cleanText(x) : null);
+  // `v.deep_dive` is read by nothing — see the note on ReadingModes.
   const modes: ReadingModes = {
     eli5: str(v.eli5),
     tldr: arr(v.tldr),
     keyNumbers: arr(v.key_numbers),
-    deepDive: str(v.deep_dive),
   };
-  return modes.eli5 || modes.tldr || modes.keyNumbers || modes.deepDive ? modes : null;
+  return modes.eli5 || modes.tldr || modes.keyNumbers ? modes : null;
 }
 
 export function mapArticle(row: any): Article {
@@ -147,10 +156,10 @@ export function mapArticle(row: any): Article {
 
 /* Did the summariser actually touch this row?
 
-   `versions` is where the AI output lands — eli5, tldr, key_numbers,
-   deep_dive — and `mapModes` returns null when none of them are present. The
-   `summary` field, by contrast, is populated for every row: it is the
-   publisher's own RSS blurb unless an editor replaced it.
+   `versions` is where the AI output lands — eli5, tldr, key_numbers — and
+   `mapModes` returns null when none of them are present. The `summary` field,
+   by contrast, is populated for every row: it is the publisher's own RSS blurb
+   unless an editor replaced it.
 
    The distinction matters because the article page was labelling every
    summary "AI Summary" under a sparkles mark, and on live data only about one

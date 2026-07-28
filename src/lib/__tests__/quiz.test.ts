@@ -2,7 +2,7 @@ import { buildQuestion, buildQuiz, pickDistractors, candidatePool } from '../qui
 import { article } from './helpers';
 
 const withModes = (id: string, title: string, tldr: string[], topic = 'India') =>
-  article({ id, title, topic, modes: { eli5: null, tldr, keyNumbers: null, deepDive: null } });
+  article({ id, title, topic, modes: { eli5: null, tldr, keyNumbers: null } });
 
 /* A pool of headlines in one topic, so distractors have somewhere to come
    from. Every one names a person and a place, which is what the classifier

@@ -43,10 +43,27 @@ describe('mapModes', () => {
   });
 
   it('reads the snake_case column names', () => {
-    const m = mapModes({ tldr: ['One'], key_numbers: ['₹1 crore'], deep_dive: 'Long text', eli5: null });
+    const m = mapModes({ tldr: ['One'], key_numbers: ['₹1 crore'], eli5: 'Simply put' });
     expect(m!.tldr).toEqual(['One']);
     expect(m!.keyNumbers).toEqual(['₹1 crore']);
-    expect(m!.deepDive).toBe('Long text');
+    expect(m!.eli5).toBe('Simply put');
+  });
+
+  /* The pipeline writes a fourth version the app does not render. Each mode
+     the card offers is *shorter* than the summary beside it, which is what
+     lets it work on a line-clamped surface; the deep dive is the one that is
+     longer, so it arrived pre-truncated on the single mode whose whole promise
+     is that there is more to read. Dropped from the model, not just hidden —
+     otherwise it is parsed, cached to disk and shipped to every device to be
+     rendered nowhere. */
+  it('ignores deep_dive entirely', () => {
+    const m = mapModes({ tldr: ['One'], deep_dive: 'A very long read' });
+    expect(m).not.toBeNull();
+    expect(Object.keys(m!)).toEqual(['eli5', 'tldr', 'keyNumbers']);
+  });
+
+  it('is null for a row carrying nothing but a deep dive', () => {
+    expect(mapModes({ deep_dive: 'A very long read' })).toBeNull();
   });
 
   it('drops empty arrays and blank strings', () => {

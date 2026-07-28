@@ -96,7 +96,15 @@ function ReaderCard({
      Only the ones this article actually carries are listed — the summariser
      has reached a fraction of the feed, so offering "Explain like I'm 5" on a
      story that has no eli5 would be a swipe into an empty page. A story with
-     nothing but its summary has a single mode and the gesture does nothing. */
+     nothing but its summary has a single mode and the gesture does nothing.
+
+     No Deep dive. It was the one mode that fought the format rather than
+     serving it: a card is a fixed-height, line-clamped surface, and the deep
+     dive is the longest text the summariser produces — so it arrived already
+     truncated, on the one mode whose entire promise is that there is more to
+     read. The other three are all *shorter* than the summary, which is why
+     they fit. See lib/content: the field is gone from the model too, so
+     nothing carries a payload no surface renders. */
   const modes = useMemo(() => {
     const out: { key: string; label: string; text?: string; points?: string[] }[] = [
       { key: 'summary', label: 'Summary', text: a.summary },
@@ -104,7 +112,6 @@ function ReaderCard({
     if (a.modes?.eli5) out.push({ key: 'eli5', label: "Explain like I'm 5", text: a.modes.eli5 });
     if (a.modes?.tldr?.length) out.push({ key: 'tldr', label: '60-second read', points: a.modes.tldr });
     if (a.modes?.keyNumbers?.length) out.push({ key: 'numbers', label: 'Key numbers', points: a.modes.keyNumbers });
-    if (a.modes?.deepDive) out.push({ key: 'deep', label: 'Deep dive', text: a.modes.deepDive });
     return out;
   }, [a.summary, a.modes]);
 

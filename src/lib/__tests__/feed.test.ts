@@ -115,7 +115,7 @@ describe('featuredFirst', () => {
 
 describe('pixPoints', () => {
   it('prefers three tl;dr bullets — where a CMS pix keeps its key points', () => {
-    const a = article({ modes: { eli5: null, tldr: ['One.', 'Two.', 'Three.', 'Four.'], keyNumbers: null, deepDive: null } });
+    const a = article({ modes: { eli5: null, tldr: ['One.', 'Two.', 'Three.', 'Four.'], keyNumbers: null } });
     expect(pixPoints(a)).toEqual(['One.', 'Two.', 'Three.']);
   });
 
@@ -126,7 +126,7 @@ describe('pixPoints', () => {
   it('tops up a partial tl;dr from the summary without repeating it', () => {
     const a = article({
       ...RICH,
-      modes: { eli5: null, tldr: ['The minister resigned on Sunday evening after a week of protests.'], keyNumbers: null, deepDive: null },
+      modes: { eli5: null, tldr: ['The minister resigned on Sunday evening after a week of protests.'], keyNumbers: null },
     });
     const out = pixPoints(a);
     expect(out).toHaveLength(3);

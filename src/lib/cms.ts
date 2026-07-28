@@ -128,7 +128,7 @@ function mapContentItem(r: ContentRow): Article {
     // pipeline card quote read time on the same basis
     readMins: Math.max(1, Math.round(words / 220)),
     wordCount: words,
-    modes: points?.length ? { eli5: null, tldr: points, keyNumbers: null, deepDive: null } : null,
+    modes: points?.length ? { eli5: null, tldr: points, keyNumbers: null } : null,
     /* The desk's own kinds map onto the three the app renders. `trax` is audio
        and has no slot yet, so it reads as a plain story rather than being
        dropped — a published trax should still be reachable, just not pretending
