@@ -61,6 +61,26 @@ describe('playbackFor', () => {
     expect(playbackFor('javascript:alert(1)').kind).toBe('none');
     expect(playbackFor('not a url').kind).toBe('none');
   });
+
+  /* The CMS serves imported clips off its own machine, and a Qix went live
+     pointing at localhost — absolute, well-formed, and on a phone it means the
+     phone. The player accepted it and sat on a black frame. */
+  it('refuses media the device cannot possibly reach', () => {
+    for (const u of [
+      'http://localhost:3000/api/media/clip.mp4',
+      'http://127.0.0.1:8080/clip.mp4',
+      'http://192.168.1.14:3000/api/media/clip.mp4',
+      'http://10.0.0.7/clip.mp4',
+      'http://studio.local/clip.mp4',
+    ]) {
+      expect(playbackFor(u).kind).toBe('none');
+    }
+  });
+
+  it('still accepts a real host that merely looks similar', () => {
+    expect(playbackFor('https://localhost.dailymattr.com/clip.mp4').kind).toBe('file');
+    expect(playbackFor('https://media.dailymattr.in/clip.mp4').kind).toBe('file');
+  });
 });
 
 describe('youtubeEmbedUrl', () => {

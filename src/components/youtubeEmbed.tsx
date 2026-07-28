@@ -43,12 +43,42 @@ export function YoutubeEmbed({
   const [ready, setReady] = useState(false);
   const web = useRef<WebView>(null);
 
+  /* Wait for the swipe to settle before creating the webview.
+   *
+   * The deck marks a card active at 75% visibility, which is mid-gesture. A
+   * webview is its own hardware-composited surface, and building one while the
+   * list is still animating stalls the very frames the swipe is made of — the
+   * card judders as it lands, every time. A quarter of a second is longer than
+   * the snap takes and shorter than anyone waits deliberately, so the video
+   * starts on a still deck and the poster covers the gap.
+   *
+   * It also spares the work entirely when someone is flicking through: pages
+   * passed over never reach the timeout. */
+  const [settled, setSettled] = useState(false);
+  useEffect(() => {
+    if (!playing) {
+      setSettled(false);
+      setReady(false);
+      return;
+    }
+    const t = setTimeout(() => setSettled(true), 280);
+    return () => clearTimeout(t);
+  }, [playing]);
+  const mounted = playing && settled;
+
   /* Built once per video, NOT per mute state.
      Rebuilding the html on unmute would reload the iframe and restart the clip
      from zero — the reader taps the speaker and loses their place. The embed is
      started muted (autoplay is refused otherwise on every mobile browser) and
      the sound is turned on afterwards through the player's own command API. */
   const uri = useMemo(() => youtubeEmbedUrl(videoId, { muted: true }), [videoId]);
+
+  /* YouTube's own still, when the desk gave the clip no cover.
+     Two of the live Shorts point `cover_url` at the YouTube *page*, which
+     lib/cms correctly nulls — leaving nothing to paint under the player and a
+     black rectangle for as long as it takes to load. This always exists for a
+     public video, and it is the frame the reader would expect anyway. */
+  const still = poster ?? `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
 
   /* YouTube always renders 16:9. To cover a portrait card the iframe has to be
      as wide as the card is tall × 16/9, which for any plausible phone is a lot
@@ -80,12 +110,8 @@ export function YoutubeEmbed({
     );
   }, [muted, ready]);
 
-  if (!playing) {
-    return poster ? (
-      <Image source={{ uri: poster }} style={StyleSheet.absoluteFill} contentFit="cover" />
-    ) : (
-      <View style={[StyleSheet.absoluteFill, { backgroundColor: '#000' }]} />
-    );
+  if (!mounted) {
+    return <Image source={{ uri: still }} style={StyleSheet.absoluteFill} contentFit="cover" />;
   }
 
   return (
@@ -110,8 +136,8 @@ export function YoutubeEmbed({
       />
       {/* Painted over the webview until its first frame lands, then faded out
           by the opacity above — a webview is white before it draws. */}
-      {!ready && poster ? (
-        <Image source={{ uri: poster }} style={StyleSheet.absoluteFill} contentFit="cover" />
+      {!ready ? (
+        <Image source={{ uri: still }} style={StyleSheet.absoluteFill} contentFit="cover" />
       ) : null}
     </View>
   );

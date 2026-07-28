@@ -17,6 +17,17 @@ const PLAYABLE_RE = /\.(mp4|m4v|mov|webm|m3u8|mpd)(\?|#|$)/i;
 const YOUTUBE_RE = /^https?:\/\/(www\.)?(youtube\.com|youtu\.be|m\.youtube\.com)\//i;
 const HTTP_RE = /^https?:\/\/\S+$/i;
 
+/* Hosts that resolve to the device itself, or to a LAN it is not on.
+ *
+ * The CMS serves imported clips from its own machine, and a Qix went live
+ * pointing at `http://localhost:3000/api/media/…`. That is a well-formed
+ * absolute URL, so every check passed and the player accepted it — then sat on
+ * a black frame, because on a phone `localhost` is the phone. Caught here so
+ * the card falls back to its cover, which is honest, rather than to a black
+ * rectangle, which looks like the app is broken. */
+const UNREACHABLE_HOST =
+  /^https?:\/\/(localhost|127\.0\.0\.1|0\.0\.0\.0|\[?::1\]?|10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+|[^/]*\.local)(:\d+)?(\/|$)/i;
+
 export type Playback =
   /** Hand it to the video player. */
   | { kind: 'file'; url: string }
@@ -49,6 +60,8 @@ export function youtubeId(url: string | null | undefined): string | null {
 export function playbackFor(mediaUrl: string | null | undefined): Playback {
   const url = (mediaUrl ?? '').trim();
   if (!HTTP_RE.test(url)) return { kind: 'none' };
+  // nothing on this device can reach it, so there is nothing to offer
+  if (UNREACHABLE_HOST.test(url)) return { kind: 'none' };
   if (PLAYABLE_RE.test(url)) return { kind: 'file', url };
   const videoId = youtubeId(url);
   if (videoId) return { kind: 'youtube', url, videoId };
