@@ -78,6 +78,17 @@ export function playbackFor(mediaUrl: string | null | undefined): Playback {
  * the deck. `rel=0` keeps YouTube's end-screen from offering unrelated videos
  * on top of a news card, and `modestbranding` drops the watermark.
  */
+/* The origin the embed is told it is running under.
+ *
+ * `enablejsapi=1` without a matching `origin` is the documented way to get
+ * "Error 153 — video player configuration error", which is exactly what a
+ * direct load of our embed returned. The webview is handed this as its
+ * baseUrl, so the hosting page and the parameter agree — which is the whole
+ * requirement, and it costs nothing to keep the no-cookie host while meeting
+ * it. (`youtube-nocookie.com` serves the same player and sets no tracking
+ * cookie unless the video is actually played.) */
+export const YOUTUBE_EMBED_ORIGIN = 'https://www.youtube-nocookie.com';
+
 export function youtubeEmbedUrl(videoId: string, opts: { muted: boolean }): string {
   const q = new URLSearchParams({
     autoplay: '1',
@@ -93,9 +104,14 @@ export function youtubeEmbedUrl(videoId: string, opts: { muted: boolean }): stri
     // lets the card turn the sound on later without reloading the iframe and
     // restarting the clip — see components/youtubeEmbed
     enablejsapi: '1',
+    origin: YOUTUBE_EMBED_ORIGIN,
   });
-  return `https://www.youtube-nocookie.com/embed/${videoId}?${q.toString()}`;
+  return `${YOUTUBE_EMBED_ORIGIN}/embed/${videoId}?${q.toString()}`;
 }
+
+/** Where to send a reader whose video refuses to embed. */
+export const youtubeWatchUrl = (videoId: string) =>
+  `https://www.youtube.com/watch?v=${videoId}`;
 
 /**
  * Whether a cover image is worth rendering. The junk rows point `cover_url` at

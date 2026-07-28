@@ -105,10 +105,22 @@ function ReelCardBase({
   const pb = useMemo(() => playbackFor(a.mediaUrl), [a.mediaUrl]);
   const length = clipLength(a.durationSec);
   const isVideo = pb.kind === 'file';
-  const isYoutube = pb.kind === 'youtube';
+  /* A YouTube video whose owner disabled embedding loads its player and then
+     refuses, which used to leave a still with no explanation and no way on.
+     When the player says so, the card stops pretending and turns into the
+     link it always had underneath. */
+  const [ytRefused, setYtRefused] = useState(false);
+  useEffect(() => setYtRefused(false), [a.id]);
+  const isYoutube = pb.kind === 'youtube' && !ytRefused;
   // anything that moves — used to decide whether the still's Ken Burns pan and
   // the topic wash belong on this card at all
   const isMoving = isVideo || isYoutube;
+
+  /* Where the play button sends the reader: a link we never claimed to play,
+     or a YouTube video that turned us down. Null when the card plays it here,
+     which is also when there is no button. */
+  const handOff =
+    pb.kind === 'link' ? pb.url : ytRefused && pb.kind === 'youtube' ? pb.url : null;
 
   /* Only the card the reader is on plays. Everything else in the deck's window
      is mounted, paused, and silent. */
@@ -240,9 +252,16 @@ function ReelCardBase({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [a.id, liked]);
 
-  // artFor is the topic's own artwork — the honest stand-in when the desk gave
-  // the clip no cover, or gave it one that isn't an image (lib/cms nulls those)
-  const src = a.imageUrl ? { uri: a.imageUrl } : artFor(a.topic);
+  /* The still under everything.
+     A YouTube card usually has no cover — lib/cms nulls one that points at the
+     YouTube page — so topic artwork would stand in for a video whose real
+     frame is one request away. Prefer YouTube's own; artFor remains the honest
+     stand-in when there is nothing at all. */
+  const src = a.imageUrl
+    ? { uri: a.imageUrl }
+    : pb.kind === 'youtube'
+      ? { uri: `https://i.ytimg.com/vi/${pb.videoId}/hqdefault.jpg` }
+      : artFor(a.topic);
   const mark = publisherMark(a.url);
 
   return (
@@ -268,6 +287,7 @@ function ReelCardBase({
               // mounted only while this is the card on screen, so the deck
               // never holds several webviews each running a player
               playing={onScreen}
+              onRefused={() => setYtRefused(true)}
             />
           ) : (
             <Animated.View style={[StyleSheet.absoluteFill, kenStyle]}>
@@ -296,14 +316,14 @@ function ReelCardBase({
           A YouTube Short is a page. Embedding it would mean shipping a webview
           to render someone else's player inside ours, ads and all; opening it
           is both more honest and better for the reader. */}
-      {pb.kind === 'link' ? (
+      {handOff ? (
         <View style={st.playWrap} pointerEvents="box-none">
           <Press
             haptic={false}
             scaleTo={0.9}
             onPress={() => {
               tick();
-              void openSource({ id: a.id, url: pb.url, topic: a.topic });
+              void openSource({ id: a.id, url: handOff, topic: a.topic });
             }}
             accessibilityRole="button"
             accessibilityLabel={`Play ${a.title}`}
