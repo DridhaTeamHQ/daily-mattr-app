@@ -4,7 +4,14 @@
     {
       "name": "dailymattr",
       "runtimeExecutable": "npx",
-      "runtimeArgs": ["expo", "start", "--web", "--port", "8086"],
+      "runtimeArgs": [
+        "expo",
+        "start",
+        "-c",
+        "--web",
+        "--port",
+        "8086"
+      ],
       "port": 8086
     }
   ]

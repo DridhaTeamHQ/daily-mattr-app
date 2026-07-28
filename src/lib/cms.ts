@@ -61,6 +61,19 @@ export const cms = cmsEnabled
 /* CMS ids and pipeline ids are both uuids, so a bare id says nothing about
    which database to read it back from. Prefixing is what lets one feed carry
    both and one route resolve either. */
+/* Logged once per reason, not once per call.
+
+   Every console.warn on device goes through the native logger, and a failure
+   that repeats — an unreachable region, a policy that returns nothing — repeats
+   the log with it. That flood is itself the crash people see, so a reason is
+   reported the first time and counted silently after. */
+const warned = new Set<string>();
+function warnOnce(reason: string, detail: string) {
+  if (warned.has(reason)) return;
+  warned.add(reason);
+  console.warn(`[cms] ${reason}: ${detail}`);
+}
+
 export const CMS_PREFIX = 'cms:';
 export const isCmsId = (id: string) => id.startsWith(CMS_PREFIX);
 export const bareCmsId = (id: string) => id.slice(CMS_PREFIX.length);
@@ -136,31 +149,46 @@ function mapContentItem(r: ContentRow): Article {
 /** Everything the desk has published, newest first. */
 export async function fetchCmsFeed(limit = 40): Promise<Article[]> {
   if (!cms) return [];
-  const { data, error } = await cms
-    .from('content_items')
-    .select(FEED_COLS)
-    .eq('status', 'published')
-    .order('published_at', { ascending: false, nullsFirst: false })
-    .limit(limit);
-  if (error) {
-    // An unreadable CMS must not take the feed down with it. RLS denials arrive
-    // as empty rather than as errors, so this is for transport failures.
-    console.warn('[cms] feed unavailable:', error.message);
+  /* Wrapped, not just error-checked.
+
+     supabase-js reports a query problem on `error`, but a transport failure —
+     the second region unreachable, DNS, an offline device — REJECTS. This runs
+     inside a Promise.all beside the main feed, so a rejection here took the
+     whole feed down and react-query retried it forever. The CMS is additive:
+     it can be absent, and the feed must not notice. */
+  try {
+    const { data, error } = await cms
+      .from('content_items')
+      .select(FEED_COLS)
+      .eq('status', 'published')
+      .order('published_at', { ascending: false, nullsFirst: false })
+      .limit(limit);
+    if (error) {
+      // RLS denials arrive as an empty array, never here — this is transport.
+      warnOnce('feed unavailable', error.message);
+      return [];
+    }
+    return (data ?? []).map((r) => mapContentItem(r as ContentRow));
+  } catch (e) {
+    warnOnce('feed unreachable', String((e as Error)?.message ?? e));
     return [];
   }
-  return (data ?? []).map((r) => mapContentItem(r as ContentRow));
 }
 
 export async function fetchCmsItem(id: string): Promise<Article | null> {
   if (!cms) return null;
-  const { data, error } = await cms
-    .from('content_items')
-    .select(FEED_COLS)
-    .eq('id', bareCmsId(id))
-    .eq('status', 'published')
-    .maybeSingle();
-  if (error || !data) return null;
-  return mapContentItem(data as ContentRow);
+  try {
+    const { data, error } = await cms
+      .from('content_items')
+      .select(FEED_COLS)
+      .eq('id', bareCmsId(id))
+      .eq('status', 'published')
+      .maybeSingle();
+    if (error || !data) return null;
+    return mapContentItem(data as ContentRow);
+  } catch {
+    return null;
+  }
 }
 
 /* ---------- editorial overrides on pipeline stories ---------- */
@@ -184,29 +212,37 @@ export async function fetchSelections(): Promise<Map<string, Selection>> {
   if (!cms) return new Map();
   if (cache && Date.now() - cache.at < TTL_MS) return cache.rows;
 
-  const { data, error } = await cms
-    .from('article_selections')
-    .select('article_id,is_featured,approved_at,title_override,summary_override,image_override')
-    .order('approved_at', { ascending: false, nullsFirst: false });
+  try {
+    const { data, error } = await cms
+      .from('article_selections')
+      .select('article_id,is_featured,approved_at,title_override,summary_override,image_override')
+      .order('approved_at', { ascending: false, nullsFirst: false });
 
-  if (error) {
-    console.warn('[cms] selections unavailable:', error.message);
-    return cache?.rows ?? new Map();
-  }
+    if (error) {
+      warnOnce('selections unavailable', error.message);
+      return cache?.rows ?? new Map();
+    }
 
-  const rows = new Map<string, Selection>();
-  for (const r of data ?? []) {
-    rows.set(String(r.article_id), {
-      articleId: String(r.article_id),
-      isFeatured: !!r.is_featured,
-      approvedAt: r.approved_at,
-      titleOverride: r.title_override,
-      summaryOverride: r.summary_override,
-      imageOverride: r.image_override,
-    });
+    const rows = new Map<string, Selection>();
+    for (const r of data ?? []) {
+      rows.set(String(r.article_id), {
+        articleId: String(r.article_id),
+        isFeatured: !!r.is_featured,
+        approvedAt: r.approved_at,
+        titleOverride: r.title_override,
+        summaryOverride: r.summary_override,
+        imageOverride: r.image_override,
+      });
+    }
+    cache = { at: Date.now(), rows };
+    return rows;
+  } catch (e) {
+    warnOnce('selections unreachable', String((e as Error)?.message ?? e));
+    // Cache the miss briefly so an unreachable CMS is retried on a timer
+    // rather than on every single feed read.
+    cache = { at: Date.now(), rows: cache?.rows ?? new Map() };
+    return cache.rows;
   }
-  cache = { at: Date.now(), rows };
-  return rows;
 }
 
 /* Resolution order, and it matters:
@@ -230,7 +266,12 @@ export function applyOverride(a: Article, sel: Selection | undefined): Article {
 /** Applies the desk's corrections across a list, fetching them once. */
 export async function withOverrides(list: Article[]): Promise<Article[]> {
   if (!cms || !list.length) return list;
-  const sels = await fetchSelections();
-  if (!sels.size) return list;
-  return list.map((a) => applyOverride(a, sels.get(a.id)));
+  try {
+    const sels = await fetchSelections();
+    if (!sels.size) return list;
+    return list.map((a) => applyOverride(a, sels.get(a.id)));
+  } catch {
+    // uncorrected is better than no feed
+    return list;
+  }
 }

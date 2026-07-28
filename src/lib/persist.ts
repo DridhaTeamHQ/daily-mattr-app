@@ -59,12 +59,32 @@ const LEGACY_KEYS = ['REACT_QUERY_OFFLINE_CACHE', 'dailymattr.rq.v2'];
    Over budget it writes an empty cache instead of a truncated one. Restoring
    nothing is a cold start, which is correct and quiet; restoring half a cache
    is a feed with holes in it. */
+/* Inline posters are not cacheable.
+
+   The CMS commits a Pix poster as a base64 data: URL on the row rather than
+   uploading it — one of them is currently 1.9MB, and six of the last
+   twenty-four carry one. A single feed of those is far past the budget below,
+   so every write took the over-budget path and stored an empty cache: the warm
+   start silently stopped existing the moment CMS content reached the feed.
+
+   Stripping them keeps the cache doing its job. A warm start paints a CMS card
+   on its topic artwork for the moment before the refetch lands, which is a
+   better trade than no warm start at all — and it costs nothing once the CMS
+   moves these to storage and cover_url becomes a URL like any other. */
+const DATA_URL = /^data:/;
+const stripInlineImages = (client: unknown): unknown =>
+  JSON.parse(
+    JSON.stringify(client, (key, value) =>
+      key === 'imageUrl' && typeof value === 'string' && DATA_URL.test(value) ? null : value,
+    ),
+  );
+
 export const persister = createAsyncStoragePersister({
   storage: AsyncStorage,
   key: KEY,
   throttleTime: 2000,
   serialize: (client) => {
-    const json = JSON.stringify(client);
+    const json = JSON.stringify(stripInlineImages(client));
     if (json.length <= MAX_CHARS) return json;
     return JSON.stringify({ ...client, clientState: { ...client.clientState, queries: [], mutations: [] } });
   },
