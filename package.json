@@ -63,7 +63,9 @@
     "web": "expo start --web",
     "lint": "expo lint",
     "test": "jest",
-    "test:watch": "jest --watch"
+    "test:watch": "jest --watch",
+    "check:env": "node scripts/check-env.js",
+    "eas-build-post-install": "node scripts/check-env.js"
   },
   "private": true,
   "jest": {
