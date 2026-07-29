@@ -47,6 +47,12 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
+    },
+    "owner": "dridhas-team",
+    "extra": {
+      "eas": {
+        "projectId": "58df54bd-a00c-4b13-b2d2-094aae3f9cf5"
+      }
     }
   }
 }
