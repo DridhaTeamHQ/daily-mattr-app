@@ -1,4 +1,5 @@
 import { supabase } from './supabase';
+import { cms, isCmsId, bareCmsId, CMS_PREFIX } from './cms';
 import { getDeviceId } from './telemetry';
 
 export type Comment = {
@@ -34,20 +35,41 @@ const shape = (r: Row): Comment => ({
   replyCount: Number(r.reply_count ?? 0),
 });
 
-/* Comments live in DB A keyed to a pipeline article. A CMS item has no row
-   there, so the uuid cast fails and the thread errors rather than showing
-   empty. Until engagement has a home in DB B, CMS stories simply have no
-   thread — reported honestly here instead of throwing at the panel. */
-export const commentsSupported = (articleId: string) => !articleId.startsWith('cms:');
+/* Every story has a thread now; which database holds it depends on who made
+   the story.
+ *
+ * `app_comments` in DB A is keyed to the pipeline's own articles table, so a
+ * CMS id could never go in it. This used to be handled by refusing: the panel
+ * showed "No comments yet", which is an invitation, and then `addComment`
+ * threw and the comment was gone. After the cutover most of the feed is CMS
+ * content, so most comments went nowhere at all.
+ *
+ * CMS migration 13 is the other half — same row shape, same argument order, so
+ * both sides map through `shape` and differ only in which client and which
+ * function name. See supabase/migrations/13_content_comments.sql. */
+/** Where a story's thread lives. Null when the CMS project isn't configured. */
+function routeFor(articleId: string) {
+  if (!isCmsId(articleId)) {
+    return { db: supabase, id: articleId, cms: false as const };
+  }
+  return cms ? { db: cms, id: bareCmsId(articleId), cms: true as const } : null;
+}
 
 export async function fetchComments(articleId: string, limit = 120): Promise<Comment[]> {
-  if (!commentsSupported(articleId)) return [];
+  const r = routeFor(articleId);
+  if (!r) return [];
   const device = await getDeviceId();
-  const { data, error } = await supabase.rpc('app_comments_for', {
-    p_article: articleId,
-    p_device: device,
-    p_limit: limit,
-  });
+  const { data, error } = r.cms
+    ? await r.db.rpc('app_content_comments_for', {
+        p_content: r.id,
+        p_device: device,
+        p_limit: limit,
+      })
+    : await r.db.rpc('app_comments_for', {
+        p_article: r.id,
+        p_device: device,
+        p_limit: limit,
+      });
   if (error) throw error;
   return ((data ?? []) as Row[]).map(shape);
 }
@@ -57,42 +79,82 @@ export async function addComment(
   body: string,
   parentId?: string | null,
 ): Promise<Comment> {
-  if (!commentsSupported(articleId)) throw new Error('Comments are not available on this story yet');
+  const r = routeFor(articleId);
+  if (!r) throw new Error('Comments are unavailable right now');
   const device = await getDeviceId();
-  const { data, error } = await supabase.rpc('app_add_comment', {
-    p_device: device,
-    p_article: articleId,
-    p_body: body,
-    p_parent: parentId ?? null,
-  });
+  const { data, error } = r.cms
+    ? await r.db.rpc('app_add_content_comment', {
+        p_device: device,
+        p_content: r.id,
+        p_body: body,
+        p_parent: parentId ?? null,
+      })
+    : await r.db.rpc('app_add_comment', {
+        p_device: device,
+        p_article: r.id,
+        p_body: body,
+        p_parent: parentId ?? null,
+      });
   if (error) throw error;
   const row = (data as Row[])?.[0];
   if (!row) throw new Error('Comment was not saved');
   return shape(row);
 }
 
+/* Takes the story as well as the comment.
+ *
+ * A comment id is a uuid from one of two projects and does not say which, so
+ * liking one needs the story it hangs off to know where to send the toggle. */
 export async function toggleCommentLike(
   commentId: string,
+  articleId: string,
 ): Promise<{ liked: boolean; likeCount: number }> {
+  const r = routeFor(articleId);
+  if (!r) throw new Error('Comments are unavailable right now');
   const device = await getDeviceId();
-  const { data, error } = await supabase.rpc('app_toggle_comment_like', {
-    p_device: device,
-    p_comment: commentId,
-  });
+  const { data, error } = await r.db.rpc(
+    r.cms ? 'app_toggle_content_comment_like' : 'app_toggle_comment_like',
+    { p_device: device, p_comment: commentId },
+  );
   if (error) throw error;
   const row = (data as { liked: boolean; like_count: number }[])?.[0];
   return { liked: !!row?.liked, likeCount: Number(row?.like_count ?? 0) };
 }
 
+/* Counts for a mixed list, which is what a feed always is.
+ *
+ * Split by origin, asked of both projects at once, and keyed back to the ids
+ * the caller passed — the CMS side answers in bare uuids, so the prefix goes
+ * back on before returning or the feed looks up a key that isn't there. */
 export async function fetchCommentCounts(ids: string[]): Promise<Record<string, number>> {
-  ids = ids.filter(commentsSupported);
-  if (!ids.length) return {};
-  const { data, error } = await supabase.rpc('app_comment_counts', { p_ids: ids });
-  if (error) throw error;
+  const pipeline = ids.filter((id) => !isCmsId(id));
+  const cmsIds = ids.filter(isCmsId);
   const out: Record<string, number> = {};
-  for (const r of (data ?? []) as { article_id: string; n: number }[]) {
+
+  const [a, b] = await Promise.all([
+    pipeline.length
+      ? supabase.rpc('app_comment_counts', { p_ids: pipeline })
+      : Promise.resolve({ data: [], error: null }),
+    cms && cmsIds.length
+      ? cms.rpc('app_content_comment_counts', { p_ids: cmsIds.map(bareCmsId) })
+      : Promise.resolve({ data: [], error: null }),
+  ]);
+
+  if (a.error) throw a.error;
+  for (const r of (a.data ?? []) as { article_id: string; n: number }[]) {
     out[r.article_id] = Number(r.n);
   }
+
+  /* A CMS outage should not take the pipeline's counts down with it — the
+     thread still opens, it just shows no badge until the next refetch. */
+  if (b.error) {
+    console.warn('[comments] cms counts unavailable:', b.error.message);
+  } else {
+    for (const r of (b.data ?? []) as { content_id: string; n: number }[]) {
+      out[CMS_PREFIX + r.content_id] = Number(r.n);
+    }
+  }
+
   return out;
 }
 

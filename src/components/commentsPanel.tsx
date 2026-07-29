@@ -25,6 +25,7 @@ export function CommentsPanel({ articleId, onClose }: { articleId: string; onClo
   const qc = useQueryClient();
   const [text, setText] = useState('');
   const [replyTo, setReplyTo] = useState<Comment | null>(null);
+  const [failed, setFailed] = useState<string | null>(null);
 
   const key = ['comments', articleId];
   const { data, isLoading } = useQuery({ queryKey: key, queryFn: () => fetchComments(articleId) });
@@ -40,10 +41,22 @@ export function CommentsPanel({ articleId, onClose }: { articleId: string; onClo
       qc.setQueryData<Comment[]>(key, (prev) => [...(prev ?? []), created]);
       qc.invalidateQueries({ queryKey: ['commentCounts'] });
     },
+    /* Says so when it fails.
+       There was no handler here, so a refused comment left the text in the
+       box and nothing else — no message, no retry, no sign anything had gone
+       wrong. Whatever else is true, the reader should never be left thinking
+       they have posted something they have not. */
+    onError: (e: unknown) => {
+      setFailed(
+        e instanceof Error && e.message
+          ? e.message
+          : "That didn't send. Check your connection and try again.",
+      );
+    },
   });
 
   const like = useMutation({
-    mutationFn: (id: string) => toggleCommentLike(id),
+    mutationFn: (id: string) => toggleCommentLike(id, articleId),
     // flip it under the thumb; the server's number replaces it on return
     onMutate: async (id) => {
       await qc.cancelQueries({ queryKey: key });
@@ -70,6 +83,7 @@ export function CommentsPanel({ articleId, onClose }: { articleId: string; onClo
   const send = () => {
     const body = text.trim();
     if (!body || post.isPending) return;
+    setFailed(null);
     post.mutate(body);
   };
 
@@ -198,6 +212,17 @@ export function CommentsPanel({ articleId, onClose }: { articleId: string; onClo
         </Animated.View>
       ) : null}
 
+      {/* Sits directly above the box the text is still sitting in, so the
+          message and the thing it refers to are in the same glance. */}
+      {failed ? (
+        <Animated.View entering={enterChrome()} style={s.failed}>
+          <LIcon name="alert-circle" size={12} color={c.danger} strokeWidth={2.4} />
+          <Txt size={11} weight="semibold" color={c.danger} style={{ flex: 1 }}>
+            {failed}
+          </Txt>
+        </Animated.View>
+      ) : null}
+
       <View style={[s.composer, { borderTopColor: line }]}>
         <View style={[s.field, { backgroundColor: field }]}>
           <TextInput
@@ -246,6 +271,13 @@ const s = StyleSheet.create({
     paddingHorizontal: 11,
     paddingVertical: 7,
     marginBottom: 8,
+  },
+  failed: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 2,
+    paddingBottom: 6,
   },
   composer: {
     flexDirection: 'row',
