@@ -18,6 +18,7 @@ import { CommentsPanel } from './commentsPanel';
 import { type Article, timeAgo, isBreaking } from '@/lib/content';
 import { useIsSaved, useIsLiked, useIsDisliked, storeActions } from '@/lib/store';
 import { track, trackImpression } from '@/lib/telemetry';
+import { trackContent, trackView } from '@/lib/engagement';
 import { artFor } from '@/lib/topicArt';
 import { highlightRuns } from '@/lib/highlight';
 import { pixStyleFor, HEADLINE_SIZE, type PixStyle } from '@/lib/pixStyles';
@@ -75,7 +76,10 @@ function PixCardBase({
   const t = topicOf(a.topic);
   const onPage = variant === 'page';
 
-  React.useEffect(() => trackImpression(a.id, a.topic), [a.id, a.topic]);
+  React.useEffect(() => {
+    trackImpression(a.id, a.topic);
+    trackView(a.id);
+  }, [a.id, a.topic]);
 
   // In the deck the card IS the page: edge to edge, no gutter, no rounding.
   // Inset on a page reads as a card stranded on a backdrop; full bleed reads

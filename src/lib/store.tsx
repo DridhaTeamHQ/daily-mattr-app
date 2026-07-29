@@ -3,6 +3,7 @@ import { AppState } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { hydrate as progressHydrate } from './progress';
 import { track } from './telemetry';
+import { react } from './engagement';
 
 // All personal state (saved, history, likes) is local to the device.
 // The database is never written to.
@@ -157,12 +158,16 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       toggleSaved: (id, topic) => {
         const wasSaved = saved.includes(id);
         track({ article_id: id, event_type: wasSaved ? 'unsave' : 'save', topic });
+        // CMS content keeps its own count in DB B; a pipeline story is already
+        // covered by the line above. See lib/engagement.
+        void react(id, 'save', !wasSaved);
         setSaved((s) => (s.includes(id) ? s.filter((x) => x !== id) : [id, ...s]));
         setSavedTopics((m) => ({ ...m, [id]: topic }));
       },
       toggleLiked: (id, topic) => {
         const wasLiked = liked.includes(id);
         track({ article_id: id, event_type: wasLiked ? 'unlike' : 'like', topic });
+        void react(id, 'like', !wasLiked);
         setLiked((s) => (s.includes(id) ? s.filter((x) => x !== id) : [id, ...s]));
         // the two are opposites — liking clears a dislike
         if (!wasLiked) setDisliked((s) => s.filter((x) => x !== id));
@@ -171,6 +176,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         const wasDisliked = disliked.includes(id);
         // tracked so it feeds the ranking as a negative signal, not just UI state
         track({ article_id: id, event_type: wasDisliked ? 'undislike' : 'dislike', topic });
+        void react(id, 'dislike', !wasDisliked);
         setDisliked((s) => (s.includes(id) ? s.filter((x) => x !== id) : [id, ...s]));
         if (!wasDisliked) setLiked((s) => s.filter((x) => x !== id));
       },

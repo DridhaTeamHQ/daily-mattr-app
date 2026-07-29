@@ -24,6 +24,7 @@ import { NAVBAR_CLEARANCE } from './navbar';
 import { type Article, timeAgo, isBreaking } from '@/lib/content';
 import { useIsSaved, useIsLiked, useIsDisliked, storeActions } from '@/lib/store';
 import { track, trackImpression } from '@/lib/telemetry';
+import { trackContent, trackView } from '@/lib/engagement';
 import { artFor } from '@/lib/topicArt';
 import { publisherMark } from '@/lib/publisherLogo';
 import { useNavVisibility } from '@/lib/navVisibility';
@@ -130,7 +131,10 @@ function ReelCardBase({
   /** the track spans the card less its 18pt margins */
   const trackW = Math.max(1, winW - 36);
 
-  useEffect(() => trackImpression(a.id, a.topic), [a.id, a.topic]);
+  useEffect(() => {
+    trackImpression(a.id, a.topic);
+    trackView(a.id);
+  }, [a.id, a.topic]);
 
   /* Reduce Motion turns this card into a photograph.
 
@@ -174,6 +178,8 @@ function ReelCardBase({
      list being scrolled past, where sound is an ambush rather than an answer.
      The speaker toggles it either way. */
   const [muted, setMuted] = useState(false);
+  /** held down right now — see the long-press gesture below */
+  const [pausedByHold, setPausedByHold] = useState(false);
 
   const player = useVideoPlayer(isVideo ? pb.url : null, (p) => {
     p.loop = true;
@@ -198,13 +204,13 @@ function ReelCardBase({
   useEffect(() => {
     if (!isVideo) return;
     try {
-      if (onScreen) player.play();
+      if (onScreen && !pausedByHold) player.play();
       else player.pause();
     } catch {
       // the player can be released mid-swipe as the deck recycles the page;
       // there is nothing to recover, and nothing worth reporting
     }
-  }, [isVideo, onScreen, player]);
+  }, [isVideo, onScreen, pausedByHold, player]);
 
   // Ken Burns. Reversing, so it breathes rather than snapping back to the top
   // of the loop every nine seconds. Only for stills — a clip has its own motion
@@ -395,6 +401,33 @@ function ReelCardBase({
   };
   const toggleChrome = () => nav.toggle();
 
+  /* Hold to pause.
+   *
+   * The gesture people already have in their hands from every short-video app,
+   * and the one thing this card could not do: a clip that plays the moment it
+   * lands and loops forever gives the reader no way to stop on a frame. Held
+   * rather than tapped because tapping is already the chrome toggle, and
+   * because holding reads as "wait" in a way a tap does not.
+   *
+   * `pausedByHold` rather than driving the player directly: the effect that
+   * follows `onScreen` would otherwise resume it on the next render and the
+   * pause would last a frame.
+   */
+  const holdPause = useMemo(
+    () =>
+      Gesture.LongPress()
+        .minDuration(220)
+        .maxDistance(18)
+        .shouldCancelWhenOutside(false)
+        .onStart(() => {
+          runOnJS(setPausedByHold)(true);
+        })
+        .onFinalize(() => {
+          runOnJS(setPausedByHold)(false);
+        }),
+    [],
+  );
+
   const taps = useMemo(() => {
     const double = Gesture.Tap()
       .numberOfTaps(2)
@@ -407,9 +440,11 @@ function ReelCardBase({
       .onEnd((_e, ok) => {
         if (ok) runOnJS(toggleChrome)();
       });
-    return Gesture.Exclusive(double, single);
+    // Exclusive, in order: a hold must not also register as a tap, and the
+    // double must get its window before the single fires.
+    return Gesture.Exclusive(holdPause, double, single);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [a.id, liked]);
+  }, [a.id, liked, holdPause]);
 
   /* The still under everything.
      A YouTube card usually has no cover — lib/cms nulls one that points at the
@@ -490,6 +525,16 @@ function ReelCardBase({
           >
             <LIcon name="play" size={26} color="#fff" strokeWidth={2.6} />
           </Press>
+        </View>
+      ) : null}
+
+      {/* Held. Without this a pause is indistinguishable from a stall — the
+          picture stops either way, and only one of them is something you did. */}
+      {pausedByHold && isVideo ? (
+        <View style={st.holdWrap} pointerEvents="none">
+          <View style={st.holdBadge}>
+            <LIcon name="pause" size={22} color="#fff" strokeWidth={2.6} />
+          </View>
         </View>
       ) : null}
 
@@ -623,6 +668,7 @@ function ReelCardBase({
           onPress={() => {
             tick();
             setShowComments(true);
+            void trackContent(a.id, 'comment_open');
           }}
         />
         <RailButton
@@ -875,6 +921,23 @@ const st = StyleSheet.create({
     paddingVertical: 6,
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.22)',
+  },
+  holdWrap: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  holdBadge: {
+    width: 62,
+    height: 62,
+    borderRadius: 31,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(11,13,18,0.38)',
   },
   playWrap: {
     position: 'absolute',
