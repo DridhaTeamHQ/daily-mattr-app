@@ -225,6 +225,7 @@ function PixCardBase({
             onPress={() => {
               tick();
               track({ article_id: a.id, event_type: 'share', topic: a.topic });
+              void trackContent(a.id, 'share');
               Share.share({ message: `${a.title}\n\n${a.url}` });
             }}
           />

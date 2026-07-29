@@ -30,9 +30,30 @@ function warnOnce(reason: string, detail: string) {
   console.warn(`[engagement] ${reason}: ${detail}`);
 }
 
-/** Only CMS content has a home for this. A pipeline story keeps using DB A. */
-const target = (articleId: string): string | null =>
-  isCmsId(articleId) ? bareCmsId(articleId) : null;
+export type StatsSource = 'cms' | 'pipeline';
+type Target = { id: string; source: StatsSource };
+
+/* The RPCs take a uuid, so anything that isn't one would come back as a 400
+   rather than being ignored. Pipeline ids are uuids from DB A; a malformed one
+   means we built the id wrong somewhere, and dropping it here keeps that from
+   turning into a warning on every tap. */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/* Both worlds count now.
+ *
+ * Engagement used to stop at CMS content, because `content_reactions` had a
+ * foreign key into `content_items` and a NewsStudio id could not satisfy it —
+ * so every like on a pipeline article was discarded right here. Migration 11
+ * replaced that key with a `source` column, and the desk's guard moved to
+ * `article_selections`: an article nobody approved still records nothing, it
+ * just gets refused at the database rather than in this file. */
+const target = (articleId: string): Target | null => {
+  if (isCmsId(articleId)) {
+    const id = bareCmsId(articleId);
+    return UUID_RE.test(id) ? { id, source: 'cms' } : null;
+  }
+  return UUID_RE.test(articleId) ? { id: articleId, source: 'pipeline' } : null;
+};
 
 /**
  * Records a reaction, or removes it. `on` is the state the reader ended up in
@@ -40,14 +61,15 @@ const target = (articleId: string): string | null =>
  * undoing itself.
  */
 export async function react(articleId: string, kind: Reaction, on: boolean): Promise<void> {
-  const id = target(articleId);
-  if (!cms || !id) return;
+  const t = target(articleId);
+  if (!cms || !t) return;
   try {
     const { error } = await cms.rpc('app_react', {
-      p_content: id,
+      p_content: t.id,
       p_device: await getDeviceId(),
       p_kind: kind,
       p_on: on,
+      p_source: t.source,
     });
     if (error) warnOnce('react unavailable', error.message);
   } catch (e) {
@@ -57,13 +79,14 @@ export async function react(articleId: string, kind: Reaction, on: boolean): Pro
 
 /** Records something that happened. Append-only; the same thing twice counts twice. */
 export async function trackContent(articleId: string, kind: ContentEvent): Promise<void> {
-  const id = target(articleId);
-  if (!cms || !id) return;
+  const t = target(articleId);
+  if (!cms || !t) return;
   try {
     const { error } = await cms.rpc('app_track_content', {
-      p_content: id,
+      p_content: t.id,
       p_device: await getDeviceId(),
       p_kind: kind,
+      p_source: t.source,
     });
     if (error) warnOnce('event unavailable', error.message);
   } catch (e) {

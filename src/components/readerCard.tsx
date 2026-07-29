@@ -36,6 +36,7 @@ import { useIsSaved, useIsLiked, storeActions } from '@/lib/store';
 import { useTheme } from '@/lib/theme';
 import { useNavVisibility } from '@/lib/navVisibility';
 import { track } from '@/lib/telemetry';
+import { trackContent, trackView } from '@/lib/engagement';
 import { artFor } from '@/lib/topicArt';
 import { publisherMark } from '@/lib/publisherLogo';
 import { tick, soft, save as saveHaptic } from '@/lib/haptics';
@@ -118,6 +119,14 @@ function ReaderCard({
   const [modeIdx, setModeIdx] = useState(0);
   // a new card in the deck starts on its summary
   React.useEffect(() => setModeIdx(0), [a.id]);
+
+  /* Counts once per story per session — `trackView` dedupes, which matters
+     here because the deck keeps neighbouring cards mounted and swiping back
+     past one is not a second read. Articles only started counting at all with
+     migration 11; before that this would have been dropped. */
+  React.useEffect(() => {
+    trackView(a.id);
+  }, [a.id]);
 
   const step = useCallback(
     (dir: number) => {
@@ -420,6 +429,7 @@ function ReaderCard({
             onPress={() => {
               if (!canOpen) return;
               tick();
+              void trackContent(a.id, 'open_source');
               void openSource(a);
             }}
             scaleTo={0.9}
@@ -492,6 +502,7 @@ function ReaderCard({
               hitSlop={6}
               onPress={() => {
                 track({ article_id: a.id, event_type: 'share', topic: a.topic });
+                void trackContent(a.id, 'share');
                 Share.share({ message: `${a.title}\n\n${a.url}` });
               }}
               style={[s.actionCircle, rest]}

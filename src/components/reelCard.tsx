@@ -517,6 +517,7 @@ function ReelCardBase({
             scaleTo={0.9}
             onPress={() => {
               tick();
+              void trackContent(a.id, 'open_source');
               void openSource({ id: a.id, url: handOff, topic: a.topic });
             }}
             accessibilityRole="button"
@@ -688,6 +689,7 @@ function ReelCardBase({
           onPress={() => {
             tick();
             track({ article_id: a.id, event_type: 'share', topic: a.topic });
+            void trackContent(a.id, 'share');
             Share.share({ message: `${a.title}\n\n${a.url}` });
           }}
         />
