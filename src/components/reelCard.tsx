@@ -126,23 +126,33 @@ function ReelCardBase({
      is mounted, paused, and silent. */
   const onScreen = useIsActiveCard(a.id);
 
-  /* Muted until asked. A feed that starts talking the moment it is scrolled
-     past is the fastest way to make someone close the app — and autoplay is
-     refused outright by every mobile player unless the video is silent. The
-     speaker in the corner is how the reader asks. */
-  const [muted, setMuted] = useState(true);
+  /* Sound on. This is the full-screen card — the reader chose to be here, and
+     a news clip without its audio is half a story.
+
+     The small card in the Home feed stays silent, and deliberately: that is a
+     list being scrolled past, where sound is an ambush rather than an answer.
+     The speaker toggles it either way. */
+  const [muted, setMuted] = useState(false);
 
   const player = useVideoPlayer(isVideo ? pb.url : null, (p) => {
     p.loop = true;
+    /* Starts muted whatever the state above says, then follows it in the
+       effect below. A native player will happily begin unmuted, but the
+       YouTube embed is a browser and browsers refuse to autoplay audible
+       video — it has to start silent and be unmuted once it is running.
+       Doing the same on both keeps one code path and one behaviour. */
     p.muted = true;
   });
 
   useEffect(() => {
     if (!isVideo) return;
     try {
-      player.muted = muted;
+      // `|| !onScreen`: a card the deck keeps mounted either side of the
+      // visible one is paused, but it must not be holding an audible session
+      // ready to blurt the instant it is scrolled to.
+      player.muted = muted || !onScreen;
     } catch {}
-  }, [isVideo, muted, player]);
+  }, [isVideo, muted, onScreen, player]);
 
   useEffect(() => {
     if (!isVideo) return;
@@ -342,52 +352,62 @@ function ReelCardBase({
         </View>
       ) : null}
 
-      {/* --- top pills. right:66 clears the floating topics button --- */}
-      <View style={[st.top, { top: topInset + 18 }]} pointerEvents="none">
+      {/* --- top row: what this is, and one control ---
+
+          There were four things fighting for this strip: a topic chip with a
+          play glyph in it, a duration pill, a round mute button, and the
+          deck's own topics button — and the middle two were laid out on top of
+          each other, the row ending at right:66 and the button starting there.
+
+          Two objects now. The topic on the left says what the story is; the
+          sound toggle on the right carries the duration inside it, because
+          they describe the same thing and a reader reaching for one is not
+          reaching past the other. The play glyph is gone: a card that is
+          visibly playing does not need a badge saying so. */}
+      <View style={[st.top, { top: topInset + 18 }]} pointerEvents="box-none">
         {isBreaking(a) ? (
           <BreakingBadge />
         ) : (
-          <View style={st.pill}>
-            <LIcon name="circle-play" size={12} color="#fff" strokeWidth={2.4} />
+          <View style={st.pill} pointerEvents="none">
             <Txt size={11.5} weight="semibold" color="#fff" ls={0.3}>
               {a.topic}
             </Txt>
           </View>
         )}
-        <View style={st.pill}>
-          <Txt size={11.5} weight="medium" color="#fff">
-            {length ?? timeAgo(a.publishedAt)}
-          </Txt>
-        </View>
+
+        {isMoving ? (
+          <Press
+            haptic={false}
+            hitSlop={12}
+            scaleTo={0.9}
+            onPress={() => {
+              tick();
+              setMuted((m) => !m);
+            }}
+            accessibilityRole="button"
+            accessibilityLabel={muted ? 'Turn sound on' : 'Turn sound off'}
+            style={st.soundPill}
+          >
+            <LIcon
+              name={muted ? 'volume-off' : 'volume-2'}
+              size={13}
+              color="#fff"
+              strokeWidth={2.3}
+            />
+            {length ? (
+              <Txt size={11.5} weight="medium" color="#fff">
+                {length}
+              </Txt>
+            ) : null}
+          </Press>
+        ) : (
+          <View style={st.pill} pointerEvents="none">
+            <Txt size={11.5} weight="medium" color="#fff">
+              {timeAgo(a.publishedAt)}
+            </Txt>
+          </View>
+        )}
       </View>
-
-      {/* --- sound.
-
-          Its own layer rather than a third pill in the row above, because that
-          row is pointerEvents="none" so the double-tap-to-like underneath it
-          never loses a race to a label. Left of the topics button, which owns
-          the right edge. */}
-      {isMoving ? (
-        <Press
-          haptic={false}
-          hitSlop={10}
-          scaleTo={0.88}
-          onPress={() => {
-            tick();
-            setMuted((m) => !m);
-          }}
-          accessibilityRole="button"
-          accessibilityLabel={muted ? 'Turn sound on' : 'Turn sound off'}
-          style={[st.sound, { top: topInset + 16 }]}
-        >
-          <LIcon
-            name={muted ? 'volume-off' : 'volume-2'}
-            size={15}
-            color="#fff"
-            strokeWidth={2.3}
-          />
-        </Press>
-      ) : null}
 
       {/* --- action rail --- */}
       <View style={[st.rail, { bottom: FLOOR + 6 }]}>
@@ -602,16 +622,16 @@ const st = StyleSheet.create({
   /* Centred on the media, not on the page: the caption and rail occupy the
      lower third, and a play button sitting behind them reads as unpressable
      even where it isn't. */
-  sound: {
-    position: 'absolute',
-    // clears the floating topics button, which sits at the right edge
-    right: 66,
-    width: 34,
-    height: 34,
-    borderRadius: 17,
+  /* Reads as a chip like the topic opposite it, not a floating button — the
+     hairline is what marks it as the one thing here you can press. */
+  soundPill: {
+    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
+    gap: 6,
     backgroundColor: 'rgba(11,13,18,0.46)',
+    borderRadius: radius.pill,
+    paddingHorizontal: 11,
+    paddingVertical: 6,
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.22)',
   },

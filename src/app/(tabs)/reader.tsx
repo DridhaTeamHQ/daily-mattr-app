@@ -505,10 +505,18 @@ export default function Reader() {
           <LIcon name="layout-grid" size={17} color="#fff" strokeWidth={2.2} />
         </Animated.View>
       </GestureDetector>
-      {topicFilter ? (
+      {/* Which deck you are in — for topics only.
+
+          A format filter labelled itself over cards that already announce what
+          they are: a "Video" badge floating above a playing video, a "Pix" one
+          over a picture story. It stacked under the topics button and turned
+          that corner into three things to read. A topic is worth naming
+          because nothing else on the card is the deck's name; a format is
+          not. */}
+      {topicFilter && !isFormatFilter(topicFilter) ? (
         <View style={[st.filterTag, { top: insets.top + 58 }]}>
           <Txt size={11.5} weight="bold" color="#fff">
-            {topicFilter === PIX_FILTER ? 'Pix' : topicFilter === VIDEO_FILTER ? 'Video' : topicFilter}
+            {topicFilter}
           </Txt>
         </View>
       ) : null}
