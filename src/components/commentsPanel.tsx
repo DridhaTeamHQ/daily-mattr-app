@@ -15,7 +15,6 @@ import {
   type Comment,
 } from '@/lib/comments';
 import { timeAgo } from '@/lib/content';
-import { trackContent } from '@/lib/engagement';
 import { soft, tick } from '@/lib/haptics';
 import { enterContent, enterItem, enterChrome } from '@/lib/transitions';
 
@@ -38,10 +37,6 @@ export function CommentsPanel({ articleId, onClose }: { articleId: string; onClo
       setText('');
       setReplyTo(null);
       soft();
-      /* On success only. Counting the tap would count the ones that failed,
-         and the desk reading "12 comments" on a story holding 9 has no way to
-         tell which number is wrong. */
-      void trackContent(articleId, 'comment');
       qc.setQueryData<Comment[]>(key, (prev) => [...(prev ?? []), created]);
       qc.invalidateQueries({ queryKey: ['commentCounts'] });
     },

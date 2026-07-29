@@ -19,15 +19,18 @@ import { getDeviceId } from './telemetry';
  */
 
 export type Reaction = 'like' | 'dislike' | 'save';
-export type ContentEvent =
-  | 'view'
-  | 'share'
-  | 'comment_open'
-  | 'open_source'
-  /* Something actually said, as opposed to the panel being opened. Comments
-     live in DB A and there is no join between the projects, so the app
-     reports the act rather than the desk counting rows. */
-  | 'comment';
+export type ContentEvent = 'view' | 'share' | 'comment_open' | 'open_source';
+
+/* No 'comment' here on purpose.
+ *
+ * It was briefly sent from the comments panel, which meant the desk's count
+ * started at whenever a build shipped and drifted from the thread whenever one
+ * was deleted. `app_comments` in DB A already holds the answer, and the Studio
+ * reads it through `app_comment_counts` — one number, from the table that owns
+ * it, including everything written before any of this existed.
+ *
+ * The kind is still accepted by the database (CMS migration 12), so nothing
+ * breaks if an older build is still out there sending it. */
 
 /* Reported once per reason rather than once per call, like lib/cms. A missing
    table — the migration not yet applied — would otherwise log on every tap. */
