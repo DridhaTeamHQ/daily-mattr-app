@@ -205,7 +205,10 @@ function PixCardBase({
             activeColor={c.brand}
             onPress={() => {
               tick();
-              setShowComments((v) => !v);
+              setShowComments((v) => {
+                if (!v) void trackContent(a.id, 'comment_open');
+                return !v;
+              });
             }}
           />
           <PixAction

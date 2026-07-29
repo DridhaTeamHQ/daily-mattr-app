@@ -19,7 +19,15 @@ import { getDeviceId } from './telemetry';
  */
 
 export type Reaction = 'like' | 'dislike' | 'save';
-export type ContentEvent = 'view' | 'share' | 'comment_open' | 'open_source';
+export type ContentEvent =
+  | 'view'
+  | 'share'
+  | 'comment_open'
+  | 'open_source'
+  /* Something actually said, as opposed to the panel being opened. Comments
+     live in DB A and there is no join between the projects, so the app
+     reports the act rather than the desk counting rows. */
+  | 'comment';
 
 /* Reported once per reason rather than once per call, like lib/cms. A missing
    table — the migration not yet applied — would otherwise log on every tap. */

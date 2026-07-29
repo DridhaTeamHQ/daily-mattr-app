@@ -516,7 +516,10 @@ function ReaderCard({
               onPress={() => {
                 tick();
                 setUsedComments(true);
-                setShowComments((v) => !v);
+                setShowComments((v) => {
+                if (!v) void trackContent(a.id, 'comment_open');
+                return !v;
+              });
               }}
               style={[s.actionCircle, rest, showComments ? on : null]}
             >
