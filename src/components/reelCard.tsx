@@ -455,11 +455,18 @@ function ReelCardBase({
           Only over a video that is genuinely playing: a progress line above a
           still photograph is a claim the card can't back.
 
+          Not gated on Reduce Motion, though the sweeping playhead it grew out
+          of was. That was decoration and this is a control: someone who has
+          asked the app to hold still has not asked to lose the only way back
+          to something they missed. The line moves either way — it reports
+          where the clip is — and everything that was purely animation stays
+          off.
+
           The line stays 2.5pt because it is chrome over someone's footage, but
           2.5pt is not a touch target — so the gesture belongs to a transparent
           strip around it, and the bar thickens under the finger to show which
           of the two you are actually holding. */}
-      {isVideo && motion ? (
+      {isVideo ? (
         <GestureDetector gesture={scrub}>
           <View style={[st.scrubHit, { top: topInset }]}>
             <Animated.View style={[st.track, barStyle]}>

@@ -34,7 +34,7 @@ import { PixCard } from '@/components/pixCard';
 import { MotionCard } from '@/components/motionCard';
 import { fetchForYou, LIVE_QUERY } from '@/lib/queries';
 import { CATEGORY_NAMES } from '@/lib/categories';
-import { setActiveCard } from '@/lib/activeCard';
+import { setActiveCard, useActiveCardWhileFocused } from '@/lib/activeCard';
 import { invalidateSelections } from '@/lib/cms';
 import { pruneEdition } from '@/lib/edition';
 import { getUnreadBreaking } from '@/lib/notifications';
@@ -74,10 +74,17 @@ const rowKey = (r: FeedRow) => r.key;
    throws outright if either changes after mount. */
 const VIEWABILITY = { itemVisiblePercentThreshold: 60 };
 
+/* Module-level like the callback that writes it — FlatList holds one identity
+   for onViewableItemsChanged, so this cannot live in component state. */
+let homeVisibleId: string | null = null;
+
 /** Marks the most-visible card active, which is what lets a video play. */
 const onViewable = ({ viewableItems }: { viewableItems: { item: FeedRow; isViewable: boolean }[] }) => {
   const first = viewableItems.find((v) => v.isViewable && v.item?.t === 'item');
-  if (first && first.item.t === 'item') setActiveCard(first.item.item.article.id);
+  if (first && first.item.t === 'item') {
+    homeVisibleId = first.item.item.article.id;
+    setActiveCard(homeVisibleId);
+  }
 };
 
 /* Module-level so its identity never changes — FlatList treats a new
@@ -143,6 +150,9 @@ export default function Home() {
   );
 
   const active = TABS.find((t) => t.label === tab)!;
+
+  // leaving the tab stops the feed's video; coming back resumes it
+  useActiveCardWhileFocused(() => homeVisibleId);
 
   const forYou = useQuery({ queryKey: ['forYou'], queryFn: fetchForYou, ...LIVE_QUERY });
 

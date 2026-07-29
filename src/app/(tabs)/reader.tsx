@@ -33,7 +33,7 @@ import {
   WHEEL_ITEMS,
   DRAG_PX,
 } from '@/components/topicDial';
-import { setActiveCard } from '@/lib/activeCard';
+import { setActiveCard, useActiveCardWhileFocused } from '@/lib/activeCard';
 import { composeFeed, kindOf } from '@/lib/feed';
 import { NAVBAR_CLEARANCE } from '@/components/navbar';
 import { type Article } from '@/lib/content';
@@ -208,6 +208,12 @@ export default function Reader() {
     enabled: feedItems.length > 0,
     staleTime: 60_000,
   });
+
+  /* The card the deck is showing, so focus can hand it back.
+     A tab screen stays mounted when you leave it, so without this the clip
+     played on behind whatever you went to. */
+  const onScreenIdRef = useRef<string | null>(null);
+  useActiveCardWhileFocused(() => onScreenIdRef.current);
 
   const listRef = useRef<any>(null);
   React.useEffect(() => {
@@ -384,6 +390,7 @@ export default function Reader() {
     const a: Article = first.item;
     if (dwellRef.current?.id === a.id) return;
     // a video card plays only while it is the card on screen (lib/activeCard)
+    onScreenIdRef.current = a.id;
     setActiveCard(a.id);
     closeDwell();
     // the tick marks a page landing. The Pix deck scrolls freely — cards drift

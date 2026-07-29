@@ -9,7 +9,7 @@ import { Txt, Press, LIcon, LogoLoader } from '@/components/ui';
 import { ReaderCardMemo } from '@/components/readerCard';
 import { PixPage } from '@/components/pixPage';
 import { ReelCard } from '@/components/reelCard';
-import { setActiveCard } from '@/lib/activeCard';
+import { useActiveCardWhileFocused } from '@/lib/activeCard';
 import { fetchArticle } from '@/lib/queries';
 import { fetchCommentCounts } from '@/lib/comments';
 import { useStore } from '@/lib/store';
@@ -45,6 +45,10 @@ export default function ArticleScreen() {
     enabled: !!id,
   });
 
+  /* One card, so it is the active one for as long as this screen is in front.
+     Navigating on used to leave it playing underneath. */
+  useActiveCardWhileFocused(() => a?.id ?? null);
+
   const counts = useQuery({
     queryKey: ['commentCounts', id],
     queryFn: () => fetchCommentCounts([id!]),
@@ -59,8 +63,6 @@ export default function ArticleScreen() {
   useEffect(() => {
     if (!a) return;
     recordRead(a.id, a.topic);
-    // this is the only card on screen, so a clip on it is the one that plays
-    setActiveCard(a.id);
     const timer = createDwellTimer();
     return () => {
       const ms = timer.stop();
