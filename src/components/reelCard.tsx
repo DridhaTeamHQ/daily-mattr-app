@@ -317,8 +317,28 @@ function ReelCardBase({
     return Gesture.Race(pan, tap);
   }, [trackW, play, scrubbing, seekTo, beginScrub, endScrub]);
 
+  /* Transforms only.
+   *
+   * This grew the bar by animating `height`, which is a layout property: every
+   * frame asks the shadow tree to re-measure, and the fill inside it was sized
+   * `height: '100%'`, so a percentage child was being re-resolved against a
+   * parent mid-animation. Reanimated can drive it, but it is the one shape on
+   * this card that touches layout on the UI thread, and it is not worth the
+   * risk for 2.5 points of thickness.
+   *
+   * scaleY does the same thing with no layout pass at all, and the knob is
+   * what actually communicates the grab. */
   const barStyle = useAnimatedStyle(() => ({
-    height: withTiming(scrubbing.value ? 5 : 2.5, { duration: 120 }),
+    transform: [{ scaleY: withTiming(scrubbing.value ? 2 : 1, { duration: 120 }) }],
+  }));
+
+  /* The handle. Hidden at rest — a permanent dot on a news card is clutter —
+   * and it is the thing your thumb is holding once you are dragging. */
+  const knobStyle = useAnimatedStyle(() => ({
+    transform: [
+      { translateX: play.value * trackW },
+      { scale: withTiming(scrubbing.value ? 1 : 0, { duration: 120 }) },
+    ],
   }));
 
   const kenStyle = useAnimatedStyle(() => ({
@@ -472,6 +492,7 @@ function ReelCardBase({
             <Animated.View style={[st.track, barStyle]}>
               <Animated.View style={[st.fill, { width: winW }, playStyle]} />
             </Animated.View>
+            <Animated.View style={[st.knob, knobStyle]} pointerEvents="none" />
           </View>
         </GestureDetector>
       ) : null}
@@ -794,9 +815,18 @@ const st = StyleSheet.create({
     justifyContent: 'center',
   },
   track: {
-    borderRadius: 3,
+    height: 3,
+    borderRadius: 2,
     overflow: 'hidden',
     backgroundColor: 'rgba(255,255,255,0.22)',
+  },
+  knob: {
+    position: 'absolute',
+    left: 12,
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    backgroundColor: '#fff',
   },
   scrubTime: {
     position: 'absolute',
@@ -806,7 +836,7 @@ const st = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 5,
   },
-  fill: { height: '100%', backgroundColor: 'rgba(255,255,255,0.95)' },
+  fill: { height: 3, backgroundColor: 'rgba(255,255,255,0.95)' },
   /* Centred on the media, not on the page: the caption and rail occupy the
      lower third, and a play button sitting behind them reads as unpressable
      even where it isn't. */

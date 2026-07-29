@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { View, ScrollView, StyleSheet, RefreshControl, AppState } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useQuery } from '@tanstack/react-query';
@@ -69,9 +69,12 @@ type FeedRow =
 
 const rowKey = (r: FeedRow) => r.key;
 
-/* Module-level, both of them: FlatList treats a new viewabilityConfig or a new
-   callback identity as a reason to tear down and redo its bookkeeping, and it
-   throws outright if either changes after mount. */
+/* FlatList captures this at mount and throws — an Invariant Violation, which
+   on Android is a red screen — if it is ever handed a different one. Module
+   scope is stable across renders, and *not* across a hot reload: Fast Refresh
+   swaps the module, the function identity changes, and the already-mounted
+   list sees a callback it did not agree to. Held in a per-mount ref below for
+   that reason, which the deck has always done. */
 const VIEWABILITY = { itemVisiblePercentThreshold: 60 };
 
 /* Module-level like the callback that writes it — FlatList holds one identity
@@ -79,13 +82,13 @@ const VIEWABILITY = { itemVisiblePercentThreshold: 60 };
 let homeVisibleId: string | null = null;
 
 /** Marks the most-visible card active, which is what lets a video play. */
-const onViewable = ({ viewableItems }: { viewableItems: { item: FeedRow; isViewable: boolean }[] }) => {
+function markVisible({ viewableItems }: { viewableItems: { item: FeedRow; isViewable: boolean }[] }) {
   const first = viewableItems.find((v) => v.isViewable && v.item?.t === 'item');
   if (first && first.item.t === 'item') {
     homeVisibleId = first.item.item.article.id;
     setActiveCard(homeVisibleId);
   }
-};
+}
 
 /* Module-level so its identity never changes — FlatList treats a new
    renderItem as a reason to re-render every mounted cell. */
@@ -153,6 +156,11 @@ export default function Home() {
 
   // leaving the tab stops the feed's video; coming back resumes it
   useActiveCardWhileFocused(() => homeVisibleId);
+
+  /* One identity for the life of this mount, whatever the module does. */
+  const onViewable = useRef((info: { viewableItems: { item: FeedRow; isViewable: boolean }[] }) =>
+    markVisible(info),
+  ).current;
 
   const forYou = useQuery({ queryKey: ['forYou'], queryFn: fetchForYou, ...LIVE_QUERY });
 

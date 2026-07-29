@@ -1,4 +1,4 @@
-import { useCallback, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useRef, useSyncExternalStore } from 'react';
 import { AppState } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 
@@ -24,6 +24,8 @@ import { useFocusEffect } from 'expo-router';
 let current: string | null = null;
 /** What to resume when the app comes back. */
 let parked: string | null = null;
+/** Whether a screen that owns playback is in front right now. */
+let focused = false;
 const subscribers = new Set<() => void>();
 
 export function setActiveCard(id: string | null): void {
@@ -74,12 +76,32 @@ export function useIsActiveCard(id: string): boolean {
  * honest answer for a list that has not been scrolled yet.
  */
 export function useActiveCardWhileFocused(getId: () => string | null): void {
+  /* Through a ref, because the focus callback is created once and the id it
+     should read is not settled when it is. On the article route the screen
+     focuses while the story is still loading, so a `getId` captured then
+     closes over `undefined` and reports null for the life of the screen —
+     which is a video that never starts, indistinguishable from one that will
+     not play. */
+  const latest = useRef(getId);
+  latest.current = getId;
+
   useFocusEffect(
     useCallback(() => {
-      const id = getId();
+      focused = true;
+      const id = latest.current();
       if (id) setActiveCard(id);
-      return () => setActiveCard(null);
-      // eslint-disable-next-line react-hooks/exhaustive-deps
+      return () => {
+        focused = false;
+        setActiveCard(null);
+      };
     }, []),
   );
+
+  /* And again whenever the id arrives or changes, since focus has long since
+     happened by then. Guarded on `focused` so a screen sitting behind another
+     cannot claim playback by finishing a fetch. */
+  const id = getId();
+  useEffect(() => {
+    if (focused && id) setActiveCard(id);
+  }, [id]);
 }
