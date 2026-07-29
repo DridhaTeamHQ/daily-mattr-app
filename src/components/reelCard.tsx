@@ -118,6 +118,18 @@ function ReelCardBase({
   );
   const sheetStyle = useAnimatedStyle(() => ({ transform: [{ translateY: sheetY.value }] }));
 
+  /* Scrubbing.
+
+     `scrubbing` is a shared value *and* a state: the worklet needs it to stop
+     the poll below fighting the finger, and React needs it to grow the bar and
+     show a time. Two representations of one fact is a smell, but the
+     alternative is a runOnJS on every frame of the drag. */
+  const scrubbing = useSharedValue(false);
+  const [scrubbingUI, setScrubbingUI] = useState(false);
+  const [scrubAt, setScrubAt] = useState(0);
+  /** the track spans the card less its 18pt margins */
+  const trackW = Math.max(1, winW - 36);
+
   useEffect(() => trackImpression(a.id, a.topic), [a.id, a.topic]);
 
   /* Reduce Motion turns this card into a photograph.
@@ -229,6 +241,8 @@ function ReelCardBase({
       return;
     }
     const id = setInterval(() => {
+      // the finger owns the playhead while it is down
+      if (scrubbing.value) return;
       try {
         const total = player.duration || Number(a.durationSec) || 0;
         if (total > 0) {
@@ -242,7 +256,70 @@ function ReelCardBase({
       }
     }, TICK_MS);
     return () => clearInterval(id);
-  }, [isVideo, onScreen, player, play, a.durationSec]);
+  }, [isVideo, onScreen, player, play, scrubbing, a.durationSec]);
+
+  /** Total run time — the player's own once it knows, the desk's until then. */
+  const totalSecs = () => {
+    try {
+      return player.duration || Number(a.durationSec) || 0;
+    } catch {
+      return Number(a.durationSec) || 0;
+    }
+  };
+
+  const seekTo = useCallback(
+    (fraction: number) => {
+      const total = totalSecs();
+      if (total <= 0) return;
+      setScrubAt(fraction * total);
+      try {
+        player.currentTime = Math.min(total, Math.max(0, fraction * total));
+      } catch {
+        // released mid-drag
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [player, a.durationSec],
+  );
+
+  const beginScrub = useCallback(() => setScrubbingUI(true), []);
+  const endScrub = useCallback(() => setScrubbingUI(false), []);
+
+  /* Drag along the bar to move through the clip.
+   *
+   * `activeOffsetX` is what keeps this from stealing the deck's swipe: a
+   * finger that starts on the bar and moves down is paging to the next story,
+   * not scrubbing, and only horizontal movement claims the gesture. The tap
+   * is separate so a single press still jumps — with a horizontal threshold
+   * there is no drag to recognise. */
+  const scrub = useMemo(() => {
+    const at = (x: number) => Math.min(1, Math.max(0, x / trackW));
+    const pan = Gesture.Pan()
+      .activeOffsetX([-6, 6])
+      .failOffsetY([-14, 14])
+      .onBegin(() => {
+        scrubbing.value = true;
+        runOnJS(beginScrub)();
+      })
+      .onUpdate((e) => {
+        play.value = at(e.x);
+        runOnJS(seekTo)(at(e.x));
+      })
+      .onFinalize(() => {
+        scrubbing.value = false;
+        runOnJS(endScrub)();
+      });
+    const tap = Gesture.Tap().onEnd((e, ok) => {
+      if (!ok) return;
+      play.value = at(e.x);
+      runOnJS(seekTo)(at(e.x));
+    });
+    return Gesture.Race(pan, tap);
+  }, [trackW, play, scrubbing, seekTo, beginScrub, endScrub]);
+
+  const barStyle = useAnimatedStyle(() => ({
+    height: withTiming(scrubbing.value ? 5 : 2.5, { duration: 120 }),
+  }));
 
   const kenStyle = useAnimatedStyle(() => ({
     transform: [
@@ -373,11 +450,37 @@ function ReelCardBase({
         </View>
       ) : null}
 
-      {/* --- playhead. Only over a clip that is genuinely playing: a progress
-              line above a still photograph is a claim the card can't back. --- */}
+      {/* --- the playhead, and the way through the clip ---
+
+          Only over a video that is genuinely playing: a progress line above a
+          still photograph is a claim the card can't back.
+
+          The line stays 2.5pt because it is chrome over someone's footage, but
+          2.5pt is not a touch target — so the gesture belongs to a transparent
+          strip around it, and the bar thickens under the finger to show which
+          of the two you are actually holding. */}
       {isVideo && motion ? (
-        <View style={[st.track, { top: topInset + 6 }]}>
-          <Animated.View style={[st.fill, { width: winW }, playStyle]} />
+        <GestureDetector gesture={scrub}>
+          <View style={[st.scrubHit, { top: topInset }]}>
+            <Animated.View style={[st.track, barStyle]}>
+              <Animated.View style={[st.fill, { width: winW }, playStyle]} />
+            </Animated.View>
+          </View>
+        </GestureDetector>
+      ) : null}
+
+      {/* Where you are landing. Only while scrubbing: a timecode pinned over a
+          clip that is simply playing is one more thing to read. */}
+      {scrubbingUI ? (
+        <View style={[st.scrubTime, { top: height * 0.42 }]} pointerEvents="none">
+          <Txt size={12} weight="bold" color="#fff">
+            {clipLength(Math.round(scrubAt)) ?? '0:00'}
+            {length ? (
+              <Txt size={12} weight="medium" color="rgba(255,255,255,0.55)">
+                {`  /  ${length}`}
+              </Txt>
+            ) : null}
+          </Txt>
         </View>
       ) : null}
 
@@ -393,7 +496,7 @@ function ReelCardBase({
           they describe the same thing and a reader reaching for one is not
           reaching past the other. The play glyph is gone: a card that is
           visibly playing does not need a badge saying so. */}
-      <View style={[st.top, { top: topInset + 18 }]} pointerEvents="box-none">
+      <View style={[st.top, { top: topInset + 30 }]} pointerEvents="box-none">
         {isBreaking(a) ? (
           <BreakingBadge />
         ) : (
@@ -673,16 +776,30 @@ const st = StyleSheet.create({
   page: { overflow: 'hidden', backgroundColor: '#05070C' },
   scrimTop: { position: 'absolute', left: 0, right: 0, top: 0 },
   scrimBottom: { position: 'absolute', left: 0, right: 0, bottom: 0, height: 340 },
-  track: {
+  /* The gesture's target, not the bar's look. 2.5pt of visible line is far
+     under any sane touch size, so the strip is padded out to something a
+     thumb can find and the line is drawn inside it. */
+  scrubHit: {
     position: 'absolute',
     left: 18,
     right: 18,
-    height: 2.5,
-    borderRadius: 2,
+    paddingVertical: 11,
+    justifyContent: 'center',
+  },
+  track: {
+    borderRadius: 3,
     overflow: 'hidden',
     backgroundColor: 'rgba(255,255,255,0.22)',
   },
-  fill: { height: 2.5, backgroundColor: 'rgba(255,255,255,0.92)' },
+  scrubTime: {
+    position: 'absolute',
+    alignSelf: 'center',
+    backgroundColor: 'rgba(11,13,18,0.62)',
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+  },
+  fill: { height: '100%', backgroundColor: 'rgba(255,255,255,0.95)' },
   /* Centred on the media, not on the page: the caption and rail occupy the
      lower third, and a play button sitting behind them reads as unpressable
      even where it isn't. */
