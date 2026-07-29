@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { View, StyleSheet, Share, useWindowDimensions } from 'react-native';
 import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
@@ -267,7 +267,19 @@ function ReelCardBase({
     }
   };
 
-  const seekTo = useCallback(
+  /* Seeking, throttled.
+   *
+   * The drag used to seek on every frame — up to sixty native seeks a second,
+   * each dragging a React state update along with it for the timecode. A
+   * decoder asked to jump that often stops decoding and starts thrashing,
+   * which is the stutter that reads as the app failing under the finger.
+   *
+   * Ten a second is past the eye's ability to tell, and the bar itself is not
+   * throttled at all: it follows the finger on the UI thread, so the thing you
+   * are watching stays exactly as smooth as your thumb. */
+  const lastSeek = useRef(0);
+
+  const applySeek = useCallback(
     (fraction: number) => {
       const total = totalSecs();
       if (total <= 0) return;
@@ -282,18 +294,31 @@ function ReelCardBase({
     [player, a.durationSec],
   );
 
+  const previewSeek = useCallback(
+    (fraction: number) => {
+      const now = Date.now();
+      if (now - lastSeek.current < 100) return;
+      lastSeek.current = now;
+      applySeek(fraction);
+    },
+    [applySeek],
+  );
+
   const beginScrub = useCallback(() => setScrubbingUI(true), []);
   const endScrub = useCallback(() => setScrubbingUI(false), []);
 
   /* Drag along the bar to move through the clip.
    *
+   * The arithmetic is inline on purpose. It used to call a helper defined in
+   * this closure, and these callbacks run as worklets on the UI thread, where
+   * a plain JavaScript function is not callable — touching the bar threw
+   * before it moved a pixel.
+   *
    * `activeOffsetX` is what keeps this from stealing the deck's swipe: a
    * finger that starts on the bar and moves down is paging to the next story,
-   * not scrubbing, and only horizontal movement claims the gesture. The tap
-   * is separate so a single press still jumps — with a horizontal threshold
-   * there is no drag to recognise. */
+   * not scrubbing, so only horizontal movement claims the gesture. The tap is
+   * separate because with a horizontal threshold there is no drag to see. */
   const scrub = useMemo(() => {
-    const at = (x: number) => Math.min(1, Math.max(0, x / trackW));
     const pan = Gesture.Pan()
       .activeOffsetX([-6, 6])
       .failOffsetY([-14, 14])
@@ -302,32 +327,30 @@ function ReelCardBase({
         runOnJS(beginScrub)();
       })
       .onUpdate((e) => {
-        play.value = at(e.x);
-        runOnJS(seekTo)(at(e.x));
+        const p = Math.min(1, Math.max(0, e.x / trackW));
+        play.value = p;
+        runOnJS(previewSeek)(p);
+      })
+      .onEnd((e) => {
+        // the exact landing point, whatever the throttle last sent
+        const p = Math.min(1, Math.max(0, e.x / trackW));
+        runOnJS(applySeek)(p);
       })
       .onFinalize(() => {
         scrubbing.value = false;
         runOnJS(endScrub)();
       });
+
     const tap = Gesture.Tap().onEnd((e, ok) => {
       if (!ok) return;
-      play.value = at(e.x);
-      runOnJS(seekTo)(at(e.x));
+      const p = Math.min(1, Math.max(0, e.x / trackW));
+      play.value = p;
+      runOnJS(applySeek)(p);
     });
-    return Gesture.Race(pan, tap);
-  }, [trackW, play, scrubbing, seekTo, beginScrub, endScrub]);
 
-  /* Transforms only.
-   *
-   * This grew the bar by animating `height`, which is a layout property: every
-   * frame asks the shadow tree to re-measure, and the fill inside it was sized
-   * `height: '100%'`, so a percentage child was being re-resolved against a
-   * parent mid-animation. Reanimated can drive it, but it is the one shape on
-   * this card that touches layout on the UI thread, and it is not worth the
-   * risk for 2.5 points of thickness.
-   *
-   * scaleY does the same thing with no layout pass at all, and the knob is
-   * what actually communicates the grab. */
+    return Gesture.Race(pan, tap);
+  }, [trackW, play, scrubbing, applySeek, previewSeek, beginScrub, endScrub]);
+
   const barStyle = useAnimatedStyle(() => ({
     transform: [{ scaleY: withTiming(scrubbing.value ? 2 : 1, { duration: 120 }) }],
   }));
