@@ -1,6 +1,7 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { View, StyleSheet } from 'react-native';
 import { Image } from 'expo-image';
+import { useVideoPlayer, VideoView } from 'expo-video';
 import { useRouter } from 'expo-router';
 import Animated, {
   Easing,
@@ -16,19 +17,25 @@ import { type Article, timeAgo } from '@/lib/content';
 import { trackImpression } from '@/lib/telemetry';
 import { artFor } from '@/lib/topicArt';
 import { useMotionAllowed } from '@/lib/motion';
+import { useIsActiveCard } from '@/lib/activeCard';
+import { playbackFor } from '@/lib/media';
 
-/* The motion slot in the feed.
+/* The video slot in the feed.
 
-   This is the story's own photograph on a slow push-in, not stock video. The
-   articles table has no video column and Supabase is read-only, so a real clip
-   here could only ever be unrelated footage sitting beside a real headline —
-   which reads as filler in a news product. A photograph that moves gives the
-   slot its own presence while every pixel on screen still belongs to the story
-   it links to.
+   This was a *simulated* video for a long time: the story's own photograph on
+   a slow push-in, because the pipeline had no video column and stock footage
+   under a real headline reads as filler. The CMS publishes actual clips now,
+   so when there is one, this plays it — a card promising motion and delivering
+   a still is the single most broken-looking thing in the app.
 
-   One shared value, transform only. Ken Burns is a scale plus a drift, both
-   of which the compositor handles without a layout pass, so a card that is
-   mounted but scrolled past costs effectively nothing. */
+   It plays only while it is the card on screen (lib/activeCard, fed by Home's
+   viewability callback). A feed list keeps several cards mounted either side
+   of the viewport, and a video decoder each would cost battery and frames for
+   footage nobody is looking at.
+
+   The Ken Burns pan survives for stories that are photographs — most of the
+   feed — and for a clip that has not started yet, so the poster never sits
+   perfectly still while the video wakes up. */
 
 const DURATION = 9000;
 
@@ -49,9 +56,56 @@ function MotionCardBase({
 
   useEffect(() => trackImpression(a.id, a.topic), [a.id, a.topic]);
 
+  /* What this card actually has. A CMS video carries a file; everything else
+     is a photograph and keeps the pan it always had. */
+  const pb = useMemo(() => playbackFor(a.mediaUrl), [a.mediaUrl]);
+  const isVideo = pb.kind === 'file';
+  const onScreen = useIsActiveCard(a.id);
+  const [firstFrame, setFirstFrame] = useState(false);
+
+  const player = useVideoPlayer(isVideo ? pb.url : null, (pl) => {
+    pl.loop = true;
+    // A feed that starts talking as you scroll is how an app gets closed.
+    // Sound belongs to the full-screen card, where it can be asked for.
+    pl.muted = true;
+  });
+
+  useEffect(() => {
+    if (!isVideo) return;
+    try {
+      if (onScreen) player.play();
+      else player.pause();
+    } catch {
+      // the player can be released as the list recycles this row; nothing to
+      // recover and nothing worth reporting
+    }
+  }, [isVideo, onScreen, player]);
+
+  /* Hold the poster until there is a frame to replace it with.
+     A VideoView paints black before its first frame, and a black rectangle
+     dropping into a scrolling feed reads as a broken card. */
+  useEffect(() => {
+    if (!isVideo || !onScreen) {
+      setFirstFrame(false);
+      return;
+    }
+    const id = setInterval(() => {
+      try {
+        if (player.currentTime > 0) setFirstFrame(true);
+      } catch {}
+    }, 120);
+    const bail = setTimeout(() => setFirstFrame(true), 2000);
+    return () => {
+      clearInterval(id);
+      clearTimeout(bail);
+    };
+  }, [isVideo, onScreen, player]);
+
   // with Reduce Motion on this is simply a photograph — see lib/motion.ts
   const motion = useMotionAllowed();
   useEffect(() => {
+    // a clip has its own movement; panning it as well is two things at once
+    if (isVideo && onScreen) return;
     if (!motion) {
       p.value = 0.35;
       return;
@@ -61,7 +115,7 @@ function MotionCardBase({
       -1,
       true, // reverse, so it breathes instead of snapping back
     );
-  }, [p, motion]);
+  }, [p, motion, isVideo, onScreen]);
 
   const ken = useAnimatedStyle(() => ({
     transform: [
@@ -83,15 +137,30 @@ function MotionCardBase({
       <View style={[s.clip, { height }]}>
         {/* overflow:hidden lives on the parent so the scaling image is cropped
             rather than pushing the card's own bounds around */}
-        <Animated.View style={[StyleSheet.absoluteFill, ken]}>
-          <Image
-            source={a.imageUrl ? { uri: a.imageUrl } : artFor(a.topic)}
+        {isVideo ? (
+          <VideoView
+            player={player}
             style={StyleSheet.absoluteFill}
             contentFit="cover"
-            recyclingKey={a.id}
-            transition={320}
+            nativeControls={false}
+            allowsPictureInPicture={false}
           />
-        </Animated.View>
+        ) : null}
+
+        {/* The poster: the whole card for a photograph, and the first moment
+            of a video. Kept mounted underneath rather than swapped out, so
+            there is never a frame with nothing in it. */}
+        {!isVideo || !firstFrame ? (
+          <Animated.View style={[StyleSheet.absoluteFill, ken]}>
+            <Image
+              source={a.imageUrl ? { uri: a.imageUrl } : artFor(a.topic)}
+              style={StyleSheet.absoluteFill}
+              contentFit="cover"
+              recyclingKey={a.id}
+              transition={320}
+            />
+          </Animated.View>
+        ) : null}
 
         <EasedScrim variant="bottom" style={s.scrim} />
 

@@ -123,7 +123,13 @@ export function usableCover(coverUrl: string | null | undefined): string | null 
   if (!url) return null;
   if (url.startsWith('data:image/')) return url;
   if (!HTTP_RE.test(url)) return null;
-  return YOUTUBE_RE.test(url) ? null : url;
+  if (YOUTUBE_RE.test(url)) return null;
+  /* A video file is not a poster. The CMS used to copy the media URL into
+     cover_url when a clip was attached, so uploading an MP4 set the cover to
+     the MP4 — and an <Image> handed a video draws nothing, silently. Fixed on
+     that side too, but rows made before it are still in the table. */
+  if (PLAYABLE_RE.test(url)) return null;
+  return url;
 }
 
 /** `92` → `1:32`. */

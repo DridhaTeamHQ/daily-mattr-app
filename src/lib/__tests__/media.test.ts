@@ -135,6 +135,19 @@ describe('usableCover', () => {
     expect(usableCover(null)).toBeNull();
     expect(usableCover('')).toBeNull();
   });
+
+  /* Attaching a clip in the CMS copied the media URL into the cover field, so
+     a Qix's poster was its own MP4 — and an <Image> given a video draws
+     nothing at all, which is indistinguishable from a broken card. */
+  it('rejects a video file posing as a poster', () => {
+    expect(usableCover('https://x.supabase.co/storage/v1/object/public/media/qix/a.mp4')).toBeNull();
+    expect(usableCover('https://cdn.example.com/clip.webm')).toBeNull();
+  });
+
+  it('still takes a real poster from the same bucket', () => {
+    const u = 'https://x.supabase.co/storage/v1/object/public/covers/qix/a.jpg';
+    expect(usableCover(u)).toBe(u);
+  });
 });
 
 describe('clipLength', () => {

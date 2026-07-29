@@ -34,6 +34,7 @@ import { PixCard } from '@/components/pixCard';
 import { MotionCard } from '@/components/motionCard';
 import { fetchForYou, LIVE_QUERY } from '@/lib/queries';
 import { CATEGORY_NAMES } from '@/lib/categories';
+import { setActiveCard } from '@/lib/activeCard';
 import { invalidateSelections } from '@/lib/cms';
 import { pruneEdition } from '@/lib/edition';
 import { getUnreadBreaking } from '@/lib/notifications';
@@ -67,6 +68,17 @@ type FeedRow =
   | { t: 'item'; key: string; item: FeedItem; index: number; divider: boolean };
 
 const rowKey = (r: FeedRow) => r.key;
+
+/* Module-level, both of them: FlatList treats a new viewabilityConfig or a new
+   callback identity as a reason to tear down and redo its bookkeeping, and it
+   throws outright if either changes after mount. */
+const VIEWABILITY = { itemVisiblePercentThreshold: 60 };
+
+/** Marks the most-visible card active, which is what lets a video play. */
+const onViewable = ({ viewableItems }: { viewableItems: { item: FeedRow; isViewable: boolean }[] }) => {
+  const first = viewableItems.find((v) => v.isViewable && v.item?.t === 'item');
+  if (first && first.item.t === 'item') setActiveCard(first.item.item.article.id);
+};
 
 /* Module-level so its identity never changes — FlatList treats a new
    renderItem as a reason to re-render every mounted cell. */
@@ -369,6 +381,13 @@ export default function Home() {
         data={rows}
         keyExtractor={rowKey}
         renderItem={renderRow}
+        /* Which card is on screen, so a video card can play and the rest stay
+           paused. The deck has had this since video landed; Home never did,
+           which is why a clip in the feed sat on its poster forever — the one
+           surface most people scroll was the one surface that never told a
+           card it was visible. */
+        onViewableItemsChanged={onViewable}
+        viewabilityConfig={VIEWABILITY}
         ListHeaderComponent={header}
         ListFooterComponent={loading ? null : footer}
         showsVerticalScrollIndicator={false}
