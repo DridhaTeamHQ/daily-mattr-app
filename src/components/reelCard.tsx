@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { View, StyleSheet, Share, useWindowDimensions } from 'react-native';
 import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
@@ -61,6 +61,8 @@ import { enterChrome } from '@/lib/transitions';
 const DURATION = 9000;
 /** how often the playhead reads the clip's real position */
 const TICK_MS = 250;
+/** how much of the card the comments take — the clip keeps the rest */
+const SHEET_RATIO = 0.56;
 /** everything sits above the floating navbar */
 const FLOOR = NAVBAR_CLEARANCE;
 
@@ -88,6 +90,33 @@ function ReelCardBase({
 
   const [showComments, setShowComments] = useState(false);
   const [burst, setBurst] = useState(0);
+
+  /* Drag the sheet's header down to put it away.
+     Bound to the header only, never the list: a pan on the comments
+     themselves has to stay a scroll, or reading them becomes a fight. */
+  const sheetY = useSharedValue(0);
+  const closeComments = useCallback(() => setShowComments(false), []);
+  const sheetDrag = useMemo(
+    () =>
+      Gesture.Pan()
+        .onChange((e) => {
+          // downward only — dragging up would lift it past its own top edge
+          sheetY.value = Math.max(0, sheetY.value + e.changeY);
+        })
+        .onEnd((e) => {
+          const far = sheetY.value > 90 || e.velocityY > 800;
+          if (far) {
+            sheetY.value = withTiming(600, { duration: 160 }, () => {
+              sheetY.value = 0;
+              runOnJS(closeComments)();
+            });
+          } else {
+            sheetY.value = withTiming(0, { duration: 180 });
+          }
+        }),
+    [sheetY, closeComments],
+  );
+  const sheetStyle = useAnimatedStyle(() => ({ transform: [{ translateY: sheetY.value }] }));
 
   useEffect(() => trackImpression(a.id, a.topic), [a.id, a.topic]);
 
@@ -504,13 +533,48 @@ function ReelCardBase({
 
       {/* comments take the whole reel — a sheet inside a full-bleed frame would
           leave the headline half-covered and neither readable */}
+      {/* Comments, as a sheet rather than a takeover.
+
+          This filled the screen edge to edge, so the video vanished the moment
+          you asked what people were saying about it — and the only way back
+          was one small × on a dark header, which is not a way out anyone finds
+          in a hurry. It covers the lower half now: the clip keeps playing
+          above it, the backdrop dismisses on a tap, the header drags down, and
+          the × is still there for whoever looks for it. */}
       {showComments ? (
-        <Animated.View
-          entering={enterChrome()}
-          style={[StyleSheet.absoluteFill, st.comments, { paddingTop: topInset + 16, paddingBottom: FLOOR - 24 }]}
-        >
-          <CommentsPanel articleId={a.id} onClose={() => setShowComments(false)} />
-        </Animated.View>
+        <>
+          <Animated.View entering={enterChrome()} style={StyleSheet.absoluteFill}>
+            <Press
+              haptic={false}
+              scaleTo={1}
+              onPress={() => setShowComments(false)}
+              accessibilityRole="button"
+              accessibilityLabel="Close comments"
+              style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(4,6,12,0.45)' }]}
+            >
+              <View />
+            </Press>
+          </Animated.View>
+
+          <GestureDetector gesture={sheetDrag}>
+            <Animated.View
+              entering={enterChrome()}
+              style={[
+                st.sheet,
+                { height: height * SHEET_RATIO, paddingBottom: FLOOR - 24 },
+                sheetStyle,
+              ]}
+            >
+              {/* The grabber is the affordance for the drag above it. */}
+              <View style={st.grabWrap}>
+                <View style={st.grab} />
+              </View>
+              <View style={{ flex: 1, paddingHorizontal: 16 }}>
+                <CommentsPanel articleId={a.id} onClose={() => setShowComments(false)} />
+              </View>
+            </Animated.View>
+          </GestureDetector>
+        </>
       ) : null}
     </View>
   );
@@ -701,5 +765,20 @@ const st = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  comments: { backgroundColor: 'rgba(6,9,16,0.96)', paddingHorizontal: 16 },
+  sheet: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(6,9,16,0.98)',
+    borderTopLeftRadius: 22,
+    borderTopRightRadius: 22,
+  },
+  grabWrap: { alignItems: 'center', paddingTop: 9, paddingBottom: 3 },
+  grab: {
+    width: 38,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: 'rgba(255,255,255,0.28)',
+  },
 });
