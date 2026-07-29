@@ -17,6 +17,11 @@ import Animated, {
 import { spring } from '@/theme';
 import { Txt, Press, Shimmer, LIcon, TopicBubble } from '@/components/ui';
 import { fetchReaderFeed, fetchPix, fetchQix, LIVE_QUERY } from '@/lib/queries';
+import { usePersonalisedFeed } from '@/lib/usePersonalisedFeed';
+
+/* Stable identity for the empty case. `data ?? []` mints a fresh array every
+   render, which would re-run the personalisation memo forever. */
+const EMPTY_FEED: Article[] = [];
 import { fetchCommentCounts } from '@/lib/comments';
 import { invalidateSelections } from '@/lib/cms';
 import { PixCard } from '@/components/pixCard';
@@ -200,7 +205,11 @@ export default function Reader() {
      cursor. The app's content is now what the desk published — a set small
      enough to arrive in one response and finite by design. There is no next
      page to ask for, so nothing asks. */
-  const feedItems = data ?? [];
+  /* Same bounded nudge Home applies, settled once per visit so a card cannot
+     move while it is being swiped. The deck is the more sensitive of the two
+     surfaces: here a reorder is not a list shifting, it is the next story
+     becoming a different story mid-gesture. */
+  const feedItems = usePersonalisedFeed(data ?? EMPTY_FEED);
 
   const commentCounts = useQuery({
     queryKey: ['commentCounts', feedItems.map((a) => a.id).join(',')],

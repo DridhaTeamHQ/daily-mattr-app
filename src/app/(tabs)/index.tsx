@@ -33,6 +33,7 @@ import { composeFeed, type FeedItem } from '@/lib/feed';
 import { PixCard } from '@/components/pixCard';
 import { MotionCard } from '@/components/motionCard';
 import { fetchForYou, LIVE_QUERY } from '@/lib/queries';
+import { usePersonalisedFeed } from '@/lib/usePersonalisedFeed';
 import { CATEGORY_NAMES } from '@/lib/categories';
 import { setActiveCard, useActiveCardWhileFocused } from '@/lib/activeCard';
 import { invalidateSelections } from '@/lib/cms';
@@ -208,7 +209,11 @@ export default function Home() {
      of rows deep and something had to be chosen for the top. A finite,
      hand-picked feed doesn't need choosing from — the lead story is simply the
      one the desk flagged, and it leads the same list everything else is in. */
-  const list = deduped;
+  /* Personalisation goes here and nowhere else, and it only nudges: each story
+     keeps its approval position as its starting point, and the reader's own
+     behaviour moves it a few places either way. The featured lead is left
+     alone and nothing is ever dropped — see lib/rank. */
+  const list = usePersonalisedFeed(deduped);
 
   // Bands are computed against one pinned `now`, refreshed on foreground and
   // every 5 minutes — never Date.now() inside the render. A story sitting near

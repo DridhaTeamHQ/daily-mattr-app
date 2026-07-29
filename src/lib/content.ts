@@ -49,7 +49,6 @@ export type Article = {
   /** Qix only: the clip itself, and how long it runs. */
   mediaUrl?: string | null;
   durationSec?: number | null;
-  score?: number; // personalization score from app_get_feed
   sim?: number; // similarity to the user's taste vector, 0..1
 };
 
@@ -149,7 +148,6 @@ export function mapArticle(row: any): Article {
     // CMS; `featured` is the desk's flag and is applied by applyOverride.
     format: 'article',
     featured: false,
-    score: typeof row.score === 'number' ? row.score : undefined,
     sim: typeof row.sim === 'number' ? row.sim : undefined,
   };
 }
