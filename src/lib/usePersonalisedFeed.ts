@@ -1,5 +1,7 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect } from 'expo-router';
+import { TOPICS_KEY } from './categories';
 import type { Article } from './content';
 import { NO_SIGNALS, personalise, type ReadSignals } from './rank';
 import { useStore } from './store';
@@ -21,6 +23,26 @@ import { useStore } from './store';
 export function usePersonalisedFeed(list: Article[]): Article[] {
   const { history, disliked, topTopics, savedTopics } = useStore();
 
+  /* What the reader said they wanted, before they had read anything.
+     `topTopics` is derived from history, so on a fresh install it is empty and
+     the feed is the desk's order with no personalisation at all — for exactly
+     the reader who has just finished telling us what they like. Read once;
+     onboarding writes it and nothing else touches it. */
+  const [seed, setSeed] = useState<string[]>([]);
+  useEffect(() => {
+    let alive = true;
+    AsyncStorage.getItem(TOPICS_KEY)
+      .then((raw) => {
+        if (!alive || !raw) return;
+        const parsed: unknown = JSON.parse(raw);
+        if (Array.isArray(parsed)) setSeed(parsed.filter((x) => typeof x === 'string'));
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, []);
+
   /* Read through a ref so the memo below can use the newest signals without
      listing them as dependencies — depending on them is exactly the live
      reordering this is avoiding. */
@@ -29,11 +51,15 @@ export function usePersonalisedFeed(list: Article[]): Article[] {
     () => ({
       readIds: new Set(history.map((h) => h.id)),
       dislikedIds: new Set(disliked),
-      favouriteTopics: new Set(topTopics),
+      /* Stated interests count until read history has something to say. Once
+         a reader has actually read enough for `topTopics` to mean anything,
+         that is the better signal — what someone does beats what they said
+         they would do — so the seed stops being merged in. */
+      favouriteTopics: new Set(topTopics.length ? topTopics : seed),
       // savedTopics is id → topic; the categories are what matter here
       savedTopics: new Set(Object.values(savedTopics)),
     }),
-    [history, disliked, topTopics, savedTopics],
+    [history, disliked, topTopics, savedTopics, seed],
   );
 
   /* Bumped on focus, which is what makes a snapshot a snapshot. Also covers

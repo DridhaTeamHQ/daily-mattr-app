@@ -39,6 +39,14 @@ export const CATEGORIES: Category[] = [
 
 export const CATEGORY_NAMES: string[] = CATEGORIES.map((c) => c.name);
 
+/* Where onboarding's answer is kept.
+ *
+ * It used to be kept nowhere: the picks went to `app_seed_topics` and the
+ * component state died with the screen, so a reader who named three interests
+ * got a feed that knew nothing about them until enough history accumulated to
+ * infer it. lib/rank reads this as a seed affinity. */
+export const TOPICS_KEY = 'dailymattr.topics.v1';
+
 const BY_SLUG = new Map(CATEGORIES.map((c) => [c.slug, c.name]));
 
 /* Unclassified, and deliberately not a category.
