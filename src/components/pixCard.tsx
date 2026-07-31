@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { View, StyleSheet, Share, ScrollView, Pressable, useWindowDimensions } from 'react-native';
+import { View, StyleSheet, Share, ScrollView, Pressable, useWindowDimensions, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
@@ -13,7 +13,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { radius, topicOf, BLUR_MAX } from '@/theme';
 import { useTheme } from '@/lib/theme';
-import { Txt, Press, LIcon, EasedScrim, BreakingBadge } from './ui';
+import { Txt, Press, LIcon, EasedScrim, BreakingBadge, FeaturedBadge } from './ui';
 import { CommentsPanel } from './commentsPanel';
 import { type Article, timeAgo, isBreaking } from '@/lib/content';
 import { useIsSaved, useIsLiked, useIsDisliked, storeActions } from '@/lib/store';
@@ -87,12 +87,21 @@ function PixCardBase({
   const W = onPage ? winW : winW - GUTTER * 2;
   const H = height ?? Math.round(Math.min(winW * 1.28, 520));
 
-  const onScroll = useCallback(
-    (e: any) => {
+  /* On settle, not on every frame.
+
+     This was an onScroll listener at 16ms — a JS-thread callback firing
+     through a whole swipe, on a card that is itself mounted inside a
+     virtualised list, so several of them ran at once while the feed scrolled.
+     The only thing `page` drives is the dot indicator, and a dot has nothing
+     useful to say mid-drag: pagingEnabled means the answer is always the page
+     you land on. Both handlers because a slow release can settle without
+     momentum. */
+  const settle = useCallback(
+    (e: NativeSyntheticEvent<NativeScrollEvent>) => {
       const p = Math.round(e.nativeEvent.contentOffset.x / W);
-      if (p !== page) setPage(p);
+      setPage((prev) => (p === prev ? prev : p));
     },
-    [W, page],
+    [W],
   );
 
   const liked = useIsLiked(a.id);
@@ -120,8 +129,8 @@ function PixCardBase({
           horizontal
           pagingEnabled
           showsHorizontalScrollIndicator={false}
-          onScroll={onScroll}
-          scrollEventThrottle={16}
+          onMomentumScrollEnd={settle}
+          onScrollEndDrag={settle}
           decelerationRate="fast"
           style={{ flex: 1 }}
         >
@@ -145,6 +154,8 @@ function PixCardBase({
         <View style={[s.top, { top: (onPage ? insets.top : 0) + 14 }]} pointerEvents="none">
           {isBreaking(a) ? (
             <BreakingBadge />
+          ) : a.featured ? (
+            <FeaturedBadge />
           ) : (
             <View style={s.tagRow}>
               <LinearGradient colors={t.grad} style={s.tagDot} />

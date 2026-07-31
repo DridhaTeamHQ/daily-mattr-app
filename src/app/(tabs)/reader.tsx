@@ -6,7 +6,6 @@ import { useQuery } from '@tanstack/react-query';
 import { tick, soft, commit as commitHaptic } from '@/lib/haptics';
 import Animated, {
   useSharedValue,
-  useAnimatedScrollHandler,
   useAnimatedStyle,
   interpolate,
   withSpring,
@@ -44,7 +43,7 @@ import { NAVBAR_CLEARANCE } from '@/components/navbar';
 import { type Article } from '@/lib/content';
 import { storeActions } from '@/lib/store';
 import { useTheme } from '@/lib/theme';
-import { useNavVisibility } from '@/lib/navVisibility';
+import { useNavScrollHandler } from '@/lib/navVisibility';
 import { track, createDwellTimer } from '@/lib/telemetry';
 import { bandOf } from '@/lib/timeBands';
 import { noteRead } from '@/lib/progress';
@@ -229,21 +228,12 @@ export default function Reader() {
     listRef.current?.scrollToOffset({ offset: 0, animated: false });
   }, [topicFilter]);
 
-  const nav = useNavVisibility();
-  // Hiding the nav moved into the scroll handler itself: it used to be an
-  // onScrollBeginDrag JS callback, so every drag round-tripped to the JS
-  // thread mid-gesture. nav.hide() is a worklet and no-ops when the bar is
-  // already hidden, so this costs nothing per drag.
-  const onScroll = useAnimatedScrollHandler({
-    onScroll: (e) => {
-      scrollY.value = e.contentOffset.y;
-    },
-    onBeginDrag: () => {
-      // runOnJS: nav.hide is a plain JS function, not a worklet — see
-      // lib/navVisibility.tsx. It self-guards, so repeat drags cost nothing.
-      runOnJS(nav.hide)();
-    },
-  });
+  /* The deck used to hide the bar on drag and never show it again — the only
+     way back was tapping a card, and because tab screens stay mounted the
+     hidden state followed you to Home. The shared hook hides on the way down,
+     brings it back on the way up, and re-shows on focus, so it can no longer
+     get stuck off-screen. It mirrors the offset into `scrollY` for PageShell. */
+  const onScroll = useNavScrollHandler(scrollY);
 
   // One pinned `now` for banding, refreshed on foreground — never Date.now()
   // during render, which would let a card near a boundary change band between

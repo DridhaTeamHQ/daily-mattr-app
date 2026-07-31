@@ -504,6 +504,27 @@ export function BreakingBadge() {
   );
 }
 
+/* The desk's lead story, said out loud.
+
+   `is_featured` reached the app already, but its entire effect was position 1 —
+   an editor toggling Feature saw two rows swap places and nothing else. On a
+   feed that is already in the desk's running order, that is invisible: the top
+   story looks like the top story either way.
+
+   Deliberately quieter than BreakingBadge. Breaking is a claim about the world
+   and pulses for attention; featured is a claim about editorial judgement and
+   should read as a mark of quality, not an alarm. Brand blue, no animation. */
+export function FeaturedBadge() {
+  return (
+    <View style={s.featured}>
+      <LIcon name="sparkles" size={11} color="#fff" strokeWidth={2.6} />
+      <Txt size={11} weight="bold" color="#fff" ls={0.6}>
+        FEATURED
+      </Txt>
+    </View>
+  );
+}
+
 /* ---------- Page loader: breathing gradient D mark ---------- */
 
 export function LogoLoader({ size = 58 }: { size?: number }) {
@@ -605,4 +626,14 @@ const s = StyleSheet.create({
     boxShadow: '0 4px 16px rgba(255,59,48,0.4)',
   },
   breakingDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: '#fff' },
+  featured: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.brand,
+    borderRadius: radius.pill,
+    paddingHorizontal: 10,
+    paddingVertical: 5.5,
+    gap: 5,
+    boxShadow: '0 4px 16px rgba(57,121,255,0.38)',
+  },
 });

@@ -23,6 +23,7 @@ import { artFor } from '@/lib/celebrationArt';
 import { useCelebration, closeCelebration, openCelebration, type CelebrationPhase } from '@/lib/celebration';
 import { useEditionProgress, markCelebrated } from '@/lib/edition';
 import { useNavVisibility } from '@/lib/navVisibility';
+import { useMotionAllowed } from '@/lib/motion';
 import { tick, soft, medium, success, commit } from '@/lib/haptics';
 import { markQuizTaken, useProgress, useStreak } from '@/lib/progress';
 import { buildQuiz, type Question } from '@/lib/quiz';
@@ -110,11 +111,13 @@ export function CelebrationOverlay({ questions }: { questions: Question[] }) {
   const nav = useNavVisibility();
   const open = useSharedValue(0);
   const burst = useSharedValue(0);
-  const [reduceMotion, setReduceMotion] = useState(false);
+  /* The app's own motion setting, not a raw system read.
 
-  useEffect(() => {
-    AccessibilityInfo.isReduceMotionEnabled().then(setReduceMotion).catch(() => {});
-  }, []);
+     This used to call AccessibilityInfo directly, which ignored the three-way
+     preference in Settings ('system' | 'reduced' | 'full') and reported false
+     on the first frame — so a reader who had turned motion off still got the
+     confetti burst on the very celebration they opened. */
+  const reduceMotion = !useMotionAllowed();
 
   useEffect(() => {
     if (c) {
@@ -126,13 +129,21 @@ export function CelebrationOverlay({ questions }: { questions: Question[] }) {
       if (!reduceMotion) burst.value = withDelay(280, withTiming(1, { duration: 950 }));
       success();
     } else if (mounted) {
+      /* Give the bar back first, unconditionally.
+
+         It used to ride along inside the same 210ms timer that unmounts the
+         overlay, and the cleanup cancelled that timer whenever `c` changed
+         before it fired — closing one celebration straight into another. In
+         that path nav.show() never ran, and the bar sat translated 150pt
+         off-screen where nothing could tap it back. Restoring chrome is not
+         something to schedule; only the unmount needs to wait for the fade. */
+      nav.show();
       open.value = withTiming(0, { duration: 190 });
       // Cleared from JS rather than a worklet callback: a dropped callback
       // would leave the overlay mounted, invisible and swallowing every touch.
       const t = setTimeout(() => {
         setMounted(false);
         burst.value = 0;
-        nav.show();
       }, 210);
       return () => clearTimeout(t);
     }

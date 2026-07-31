@@ -8,10 +8,8 @@ import { Image } from 'expo-image';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
-  useAnimatedScrollHandler,
   interpolate,
   Extrapolation,
-  runOnJS,
   withRepeat,
   withSequence,
   withTiming,
@@ -39,7 +37,7 @@ import { setActiveCard, useActiveCardWhileFocused } from '@/lib/activeCard';
 import { invalidateSelections } from '@/lib/cms';
 import { pruneEdition } from '@/lib/edition';
 import { getUnreadBreaking } from '@/lib/notifications';
-import { useNavVisibility } from '@/lib/navVisibility';
+import { useNavScrollHandler } from '@/lib/navVisibility';
 import { useIsOnline } from '@/lib/network';
 import { enterContent, enterChrome, enterScreen } from '@/lib/transitions';
 
@@ -113,35 +111,17 @@ export default function Home() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { c, isDark } = useTheme();
-  const nav = useNavVisibility();
   const scrollY = useSharedValue(0);
-  const lastY = useSharedValue(0);
+  /* One handler, one owner of visibility.
 
-  // navShown latches the last state we asked for, so runOnJS fires only when
-  // visibility actually changes — a handful of times per scroll, not on every
-  // frame. nav.show/hide are plain JS functions (see lib/navVisibility.tsx:
-  // worklets reached through a Context could not be serialised to the UI
-  // thread on device) and they write to a shared value, so crossing to JS here
-  // costs a function call and re-renders nothing.
-  const navShown = useSharedValue(1);
-  const onScroll = useAnimatedScrollHandler((e) => {
-    const y = e.contentOffset.y;
-    scrollY.value = y;
-    const dy = y - lastY.value;
-    if (y < 60) {
-      if (navShown.value !== 1) {
-        navShown.value = 1;
-        runOnJS(nav.show)();
-      }
-    } else if (dy > 14 && navShown.value !== 0) {
-      navShown.value = 0;
-      runOnJS(nav.hide)();
-    } else if (dy < -14 && navShown.value !== 1) {
-      navShown.value = 1;
-      runOnJS(nav.show)();
-    }
-    lastY.value = y;
-  });
+     Home used to keep `navShown`, a private mirror of the provider's target,
+     and hop to JS through runOnJS to move the bar. The mirror was the bug: the
+     reader, a card tap or the celebration could change the real bar while Home
+     sat frozen behind them, and the mirror never heard about it — so the next
+     scroll no-opped on exactly the branch that would have put the bar back.
+     The hook owns the thresholds now, resets on focus, and mirrors the offset
+     into `scrollY` for the masthead below. See lib/navVisibility. */
+  const onScroll = useNavScrollHandler(scrollY);
   // the masthead gives way to the stories as you go
   const headerStyle = useAnimatedStyle(() => ({
     opacity: interpolate(scrollY.value, [0, 84], [1, 0], Extrapolation.CLAMP),

@@ -84,6 +84,7 @@ type ContentRow = {
   duration_sec: number | null;
   source_links: { title: string; url: string }[] | null;
   fact_score: number | null;
+  is_featured?: boolean | null;
   fact_label: string | null;
   published_at: string | null;
   created_at: string;
@@ -91,7 +92,7 @@ type ContentRow = {
 
 /** The columns a feed needs. `body` is included only where the format uses it. */
 const FEED_COLS =
-  'id,kind,title,summary,body,category_slug,cover_url,media_url,duration_sec,source_links,fact_score,fact_label,published_at,created_at';
+  'id,kind,title,summary,body,category_slug,cover_url,media_url,duration_sec,source_links,fact_score,fact_label,is_featured,published_at,created_at';
 
 function mapContentItem(r: ContentRow): Article {
   const links = Array.isArray(r.source_links) ? r.source_links : [];
@@ -134,7 +135,11 @@ function mapContentItem(r: ContentRow): Article {
        dropped — a published trax should still be reachable, just not pretending
        to be a video. */
     format: r.kind === 'pix' ? 'pix' : r.kind === 'qix' ? 'qix' : 'article',
-    featured: false,
+    /* Was hardcoded false, which meant a Pix, Qix or Trax could never be
+       featured at all — the flag only existed on article_selections, and that
+       table only describes pipeline stories. content_items carries its own
+       now (migration 14). */
+    featured: !!r.is_featured,
     mediaUrl: r.media_url,
     // bigint over the wire arrives as a string
     durationSec: r.duration_sec == null ? null : Number(r.duration_sec) || null,

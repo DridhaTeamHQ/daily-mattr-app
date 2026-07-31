@@ -18,7 +18,7 @@ import Animated, {
 import { useVideoPlayer, VideoView } from 'expo-video';
 import { radius, topicOf } from '@/theme';
 import { useTheme } from '@/lib/theme';
-import { Txt, Press, LIcon, EasedScrim, BreakingBadge } from './ui';
+import { Txt, Press, LIcon, EasedScrim, BreakingBadge, FeaturedBadge } from './ui';
 import { CommentsPanel } from './commentsPanel';
 import { NAVBAR_CLEARANCE } from './navbar';
 import { type Article, timeAgo, isBreaking } from '@/lib/content';
@@ -596,6 +596,8 @@ function ReelCardBase({
       <View style={[st.top, { top: topInset + 30 }]} pointerEvents="box-none">
         {isBreaking(a) ? (
           <BreakingBadge />
+          ) : a.featured ? (
+            <FeaturedBadge />
         ) : (
           <View style={st.pill} pointerEvents="none">
             <Txt size={11.5} weight="semibold" color="#fff" ls={0.3}>

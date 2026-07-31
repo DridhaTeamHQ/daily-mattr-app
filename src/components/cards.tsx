@@ -13,7 +13,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { colors, radius, shadow, topicOf, stagger } from '@/theme';
 import { useTheme, glassCard } from '@/lib/theme';
-import { StoryTitle, CardTitle, Txt, Press, BreakingBadge, EasedScrim, LIcon } from './ui';
+import { StoryTitle, CardTitle, Txt, Press, BreakingBadge, FeaturedBadge, EasedScrim, LIcon } from './ui';
 import { type Article, timeAgo, isBreaking, cardLabel } from '@/lib/content';
 import { useStore } from '@/lib/store';
 import { trackImpression } from '@/lib/telemetry';
@@ -48,6 +48,8 @@ export function StoryCard({ a, index = 0 }: { a: Article; index?: number }) {
         <View style={s.storyTop}>
           {isBreaking(a) ? (
             <BreakingBadge />
+          ) : a.featured ? (
+            <FeaturedBadge />
           ) : (
             <View style={s.glassPill}>
               <Txt size={11.5} weight="semibold" color="#fff" ls={0.3}>
@@ -104,6 +106,8 @@ export function TopStoryCard({ a }: { a: Article }) {
         <View style={s.storyTop}>
           {isBreaking(a) ? (
             <BreakingBadge />
+          ) : a.featured ? (
+            <FeaturedBadge />
           ) : (
             <View style={s.glassPill}>
               <Txt size={11} weight="semibold" color="#fff" ls={0.3}>

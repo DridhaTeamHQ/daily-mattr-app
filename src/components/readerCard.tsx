@@ -19,7 +19,7 @@ import Animated, {
   type SharedValue,
 } from 'react-native-reanimated';
 import { colors, radius, shadow, spring, topicOf, BLUR_MAX } from '@/theme';
-import { Txt, Press, BreakingBadge, EasedScrim, LIcon } from './ui';
+import { Txt, Press, BreakingBadge, FeaturedBadge, EasedScrim, LIcon } from './ui';
 import { CommentsPanel } from './commentsPanel';
 import { ImagePeek } from './imagePeek';
 import { SpokenText } from './spokenText';
@@ -61,6 +61,8 @@ export const ReaderCardMemo = React.memo(
   ReaderCard,
   (p, n) =>
     p.a.id === n.a.id &&
+    // the desk can feature a story while it is on screen; id alone would miss it
+    p.a.featured === n.a.featured &&
     p.height === n.height &&
     p.topInset === n.topInset &&
     p.commentCount === n.commentCount &&
@@ -322,6 +324,8 @@ function ReaderCard({
       <View style={[s.cardTop, { top: topInset + 12 }]} pointerEvents="none">
         {isBreaking(a) ? (
           <BreakingBadge />
+          ) : a.featured ? (
+            <FeaturedBadge />
         ) : (
           <View style={s.tagRow}>
             <LinearGradient colors={t.grad} style={s.tagDot} />

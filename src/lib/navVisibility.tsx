@@ -1,56 +1,60 @@
-import React, { createContext, useContext, useMemo } from 'react';
-import { useSharedValue, withSpring, type SharedValue } from 'react-native-reanimated';
+import React, { createContext, useCallback, useContext, useMemo } from 'react';
+import { useFocusEffect } from 'expo-router';
+import {
+  useAnimatedScrollHandler,
+  useSharedValue,
+  withSpring,
+  type SharedValue,
+} from 'react-native-reanimated';
 import { spring } from '@/theme';
+import { useMotionAllowed } from './motion';
 
-// Navbar visibility is a shared value, not React state.
-//
-// It used to be useState. Two things went wrong with that:
-//
-//   1. The navbar drove its transform with withSpring() *inside*
-//      useAnimatedStyle. Reanimated only animates when the animation is
-//      assigned to a shared value — inside a style callback the spring is
-//      rebuilt from scratch on every re-render, so it restarted from wherever
-//      it had got to. That is the stutter.
-//   2. Every hide()/show() was a setState, so each one re-rendered the
-//      provider's whole subtree mid-scroll — and re-rendering is exactly what
-//      restarted the spring in (1).
-//
-// Now the scroll handler writes to the shared value straight from the UI
-// thread, nothing re-renders, and the spring is assigned to the value (the
-// documented pattern) so it interpolates from its current position instead of
-// snapping back.
+/* Navbar visibility.
+ *
+ * Held as a shared value rather than React state. It used to be useState, and
+ * two things went wrong: the navbar built its spring *inside* useAnimatedStyle,
+ * so every re-render restarted it from wherever it had got to; and every
+ * hide()/show() re-rendered the provider's subtree mid-scroll, which is what
+ * caused those re-renders. Assigning the spring to the value is the documented
+ * pattern and it interpolates from the current position instead of snapping.
+ *
+ * What the context carries is shared values, never worklets. A worklet reached
+ * through a Context value has to be serialised across the thread boundary, and
+ * that is what once booted on web and died in Expo Go. The scroll logic below
+ * gets onto the UI thread by being *created in the component that uses it*
+ * (see `useNavScrollHandler`), not by being passed through a provider.
+ */
+
 type NavActions = {
   show: () => void;
   hide: () => void;
   toggle: () => void;
 };
 
-const StateCtx = createContext<SharedValue<number> | null>(null);
-const ActionsCtx = createContext<NavActions>({ show: () => {}, hide: () => {}, toggle: () => {} });
+type NavRefs = {
+  /** 1 = shown, 0 = hidden. Interpolated, so mid-flight most of the time. */
+  visible: SharedValue<number>;
+  /** Where the spring is *heading* — `visible` can't answer "already going
+   *  there?" while it is animating, and without that check a scroll that fires
+   *  hide() every frame restarts the spring every frame. */
+  target: SharedValue<number>;
+};
+
+const RefsCtx = createContext<NavRefs | null>(null);
+const ActionsCtx = createContext<NavActions>({
+  show: () => {},
+  hide: () => {},
+  toggle: () => {},
+});
 
 export function NavVisibilityProvider({ children }: { children: React.ReactNode }) {
-  // 1 = shown, 0 = hidden. Interpolated, so it is mid-flight most of the time.
   const visible = useSharedValue(1);
-  // Where the spring is *heading*. Kept separate because `visible` is mid-flight
-  // during the animation, so it can't answer "are we already going there?" —
-  // and without that check a scroll that fires hide() on every frame restarts
-  // the spring on every frame.
   const target = useSharedValue(1);
 
-  /* Plain JS functions, deliberately NOT worklets.
+  const refs = useMemo<NavRefs>(() => ({ visible, target }), [visible, target]);
 
-     They were worklets so a scroll handler could call them without a runOnJS
-     hop. That works on web — Reanimated runs everything on the JS thread there
-     — but on device the handler runs on the UI thread and Reanimated has to
-     serialise this object, with its worklet members, across the thread
-     boundary. A worklet reached through a React Context value is the fragile
-     case, and it is why the app booted on web and died in Expo Go.
-
-     Callers on the UI thread now wrap these in runOnJS. That costs one hop per
-     visibility *change* — not per frame, because of the target check below —
-     which is nothing, and it is the mechanism the app used before. The part
-     that actually fixed the stutter was moving visibility off React state and
-     onto a shared value; that is untouched. */
+  /* Plain JS functions, for taps — a card tap, an overlay opening. Not for
+     scrolling; that path never leaves the UI thread. */
   const actions = useMemo<NavActions>(
     () => ({
       show: () => {
@@ -74,18 +78,100 @@ export function NavVisibilityProvider({ children }: { children: React.ReactNode 
 
   return (
     <ActionsCtx.Provider value={actions}>
-      <StateCtx.Provider value={visible}>{children}</StateCtx.Provider>
+      <RefsCtx.Provider value={refs}>{children}</RefsCtx.Provider>
     </ActionsCtx.Provider>
   );
 }
 
-// navbar only — the animated 0..1 progress
-export const useNavVisible = (): SharedValue<number> => {
-  const v = useContext(StateCtx);
-  if (!v) throw new Error('useNavVisible must be used inside <NavVisibilityProvider>');
+function useNavRefs(): NavRefs {
+  const v = useContext(RefsCtx);
+  if (!v) throw new Error('nav visibility used outside <NavVisibilityProvider>');
   return v;
-};
+}
 
-// screens: stable identity, and every action is a worklet so it can be called
-// directly from a scroll handler without a runOnJS hop
+/** navbar only — the animated 0..1 progress */
+export const useNavVisible = (): SharedValue<number> => useNavRefs().visible;
+
+/** screens and cards: show/hide/toggle from the JS thread, stable identity */
 export const useNavVisibility = () => useContext(ActionsCtx);
+
+/* How far the reader has to travel before the bar reacts.
+ *
+ * Accumulated distance, not a per-event delta. The old rule compared one
+ * frame's `dy` against 14pt, which made hiding velocity-dependent — a flick
+ * crossed it, a slow drag never did — and, worse, let a decelerating fling
+ * flap either side of the threshold, restarting the spring each time. That
+ * flapping is what read as jitter. Asymmetric on purpose: getting the bar back
+ * should be easier than losing it. */
+const HIDE_AFTER = 56;
+const SHOW_AFTER = 32;
+/** Near the top the bar is always shown, whatever the travel says. */
+const TOP_ZONE = 60;
+
+/**
+ * The scroll handler that drives the navbar, and the only thing that should.
+ *
+ * Runs entirely on the UI thread — no runOnJS on the scroll path at all. Pass a
+ * shared value as `mirror` to receive the raw offset for other effects (Home's
+ * header, the reader's page shell) rather than attaching a second handler.
+ *
+ * Also resets on focus. Tab screens stay mounted (`freezeOnBlur`), and nothing
+ * used to re-sync visibility when you came back — so hiding the bar in the
+ * reader and switching to Home left it hidden, translated 150pt away and
+ * untappable, until some scroll happened to cross a threshold.
+ */
+export function useNavScrollHandler(mirror?: SharedValue<number>) {
+  const { visible, target } = useNavRefs();
+  const motion = useMotionAllowed();
+
+  const lastY = useSharedValue(0);
+  const travel = useSharedValue(0);
+
+  useFocusEffect(
+    useCallback(() => {
+      lastY.value = 0;
+      travel.value = 0;
+      target.value = 1;
+      visible.value = motion ? withSpring(1, spring.gentle) : 1;
+    }, [visible, target, lastY, travel, motion]),
+  );
+
+  return useAnimatedScrollHandler(
+    (e) => {
+      const y = e.contentOffset.y;
+      if (mirror) mirror.value = y;
+
+      const dy = y - lastY.value;
+      lastY.value = y;
+
+      const settle = (next: number) => {
+        if (target.value === next) return;
+        target.value = next;
+        // Reduce Motion applies here too: the bar used to spring 150pt
+        // regardless of the reader's setting.
+        visible.value = motion ? withSpring(next, spring.gentle) : next;
+      };
+
+      if (y < TOP_ZONE) {
+        travel.value = 0;
+        settle(1);
+        return;
+      }
+
+      // A change of direction starts the count again, so travel always means
+      // "distance in the current direction" rather than a running total that
+      // never resets.
+      if (dy > 0 !== travel.value > 0) travel.value = 0;
+      travel.value += dy;
+
+      if (travel.value > HIDE_AFTER) {
+        settle(0);
+        travel.value = 0;
+      } else if (travel.value < -SHOW_AFTER) {
+        settle(1);
+        travel.value = 0;
+      }
+    },
+    [mirror, motion],
+  );
+}

@@ -85,13 +85,20 @@ export async function liveArticles(): Promise<Article[]> {
     rows.push(applyOverride(mapArticle(row), sels.get(id)));
   }
 
-  return featuredFirst(rows);
+  /* Not featuredFirst here — liveEverything applies it once, across both the
+     approved stories and the desk's own items. Sorting twice would be harmless
+     (it is a stable partition) but would suggest this is the final order. */
+  return rows;
 }
 
 /** Everything live, in one list: approved stories, then the desk's own items. */
 async function liveEverything(): Promise<Article[]> {
   const [approved, authored] = await Promise.all([liveArticles(), fetchCmsFeed(60)]);
-  return [...approved, ...authored];
+  /* Featured is decided across the whole feed, not within each half.
+     `featuredFirst` used to run inside liveArticles(), which meant it only ever
+     saw pipeline stories — a featured Pix sat wherever the CMS half happened to
+     start, behind every approved article. */
+  return featuredFirst([...approved, ...authored]);
 }
 
 /* Home. No ranking pass and no diversity pass: both existed to impose order on
