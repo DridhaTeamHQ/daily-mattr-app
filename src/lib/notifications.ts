@@ -146,6 +146,32 @@ export async function registerPushToken(): Promise<void> {
   }
 }
 
+/**
+ * The tap that launched the app, if that is why it launched.
+ *
+ * The listener below only hears taps that happen while the app is alive. When
+ * the app was killed, Android delivers the response during startup — before
+ * any JavaScript has run, let alone before an effect gated on a value read out
+ * of AsyncStorage. Nobody is listening yet, so the tap is simply lost and the
+ * reader lands on the feed wondering where their story went.
+ *
+ * expo-notifications keeps that response for exactly this, so it has to be
+ * asked for rather than waited for. Cleared once read: without that, every
+ * later remount would open the same story again, days after it was tapped.
+ */
+export async function consumeLaunchNotification(): Promise<string | null> {
+  if (!N) return null;
+  try {
+    const resp = await N.getLastNotificationResponseAsync();
+    const id = resp?.notification?.request?.content?.data?.articleId;
+    if (!id) return null;
+    await N.clearLastNotificationResponseAsync();
+    return String(id);
+  } catch {
+    return null;
+  }
+}
+
 // Notification tap → callback with the articleId. No-op where unsupported.
 export function addNotificationTapListener(cb: (articleId: string) => void): { remove: () => void } {
   if (!N) return { remove: () => {} };

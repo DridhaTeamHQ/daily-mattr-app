@@ -29,7 +29,12 @@ import { NavVisibilityProvider } from '@/lib/navVisibility';
 import { AccountProvider } from '@/lib/account';
 import { CelebrationHost } from '@/components/celebration';
 import { ensureEdition, hydrateEdition } from '@/lib/edition';
-import { registerPushToken, checkBreaking, addNotificationTapListener } from '@/lib/notifications';
+import {
+  registerPushToken,
+  checkBreaking,
+  addNotificationTapListener,
+  consumeLaunchNotification,
+} from '@/lib/notifications';
 import { flush } from '@/lib/telemetry';
 import { ONBOARDED_KEY, setOnboardedFlag, subscribeOnboarded } from '@/lib/onboardingKey';
 import { LaunchIntro } from '@/components/launchIntro';
@@ -164,6 +169,16 @@ function ThemedStack() {
 
     // notification tap → deep link to the article
     const tapSub = addNotificationTapListener((id) => router.push(`/article/${id}`));
+
+    /* The tap that opened the app from cold, which the listener above never
+       sees — see consumeLaunchNotification. Safe to run inside this effect
+       because it is gated on `onboarded`: a first-time reader is not dragged
+       into a story before they have chosen a single topic. */
+    consumeLaunchNotification()
+      .then((id) => {
+        if (id) router.push(`/article/${id}`);
+      })
+      .catch(() => {});
 
     return () => {
       sub.remove();
