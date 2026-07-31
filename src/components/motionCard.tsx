@@ -63,7 +63,19 @@ function MotionCardBase({
   const onScreen = useIsActiveCard(a.id);
   const [firstFrame, setFirstFrame] = useState(false);
 
-  const player = useVideoPlayer(isVideo ? pb.url : null, (pl) => {
+  /* A decoder only while the card is actually on screen.
+
+     The source was `isVideo ? url : null`, which builds a player for every
+     video card in the mounted window — and both tabs stay mounted when you
+     switch between them, so the deck's players and the feed's players are
+     alive at the same time. Android hands out a small, fixed number of
+     hardware MediaCodec instances; past it the app does not degrade, it dies.
+     That is what "cannot take the load" was.
+
+     Passing null releases the player. Coming back to a card rebuilds it, which
+     costs a moment of buffering — covered by the poster, which is held until
+     the first frame arrives anyway. */
+  const player = useVideoPlayer(isVideo && onScreen ? pb.url : null, (pl) => {
     pl.loop = true;
     // A feed that starts talking as you scroll is how an app gets closed.
     // Sound belongs to the full-screen card, where it can be asked for.

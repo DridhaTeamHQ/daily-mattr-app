@@ -181,7 +181,19 @@ function ReelCardBase({
   /** held down right now — see the long-press gesture below */
   const [pausedByHold, setPausedByHold] = useState(false);
 
-  const player = useVideoPlayer(isVideo ? pb.url : null, (p) => {
+  /* A decoder only while the card is actually on screen.
+
+     The source was `isVideo ? url : null`, which builds a player for every
+     video card in the mounted window — and both tabs stay mounted when you
+     switch between them, so the deck's players and the feed's players are
+     alive at the same time. Android hands out a small, fixed number of
+     hardware MediaCodec instances; past it the app does not degrade, it dies.
+     That is what "cannot take the load" was.
+
+     Passing null releases the player. Coming back to a card rebuilds it, which
+     costs a moment of buffering — covered by the poster, which is held until
+     the first frame arrives anyway. */
+  const player = useVideoPlayer(isVideo && onScreen ? pb.url : null, (p) => {
     p.loop = true;
     /* Starts muted whatever the state above says, then follows it in the
        effect below. A native player will happily begin unmuted, but the
