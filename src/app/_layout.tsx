@@ -26,6 +26,7 @@ import {
 import { StoreProvider } from '@/lib/store';
 import { ThemeProvider, useTheme } from '@/lib/theme';
 import { NavVisibilityProvider } from '@/lib/navVisibility';
+import { AccountProvider } from '@/lib/account';
 import { CelebrationHost } from '@/components/celebration';
 import { ensureEdition, hydrateEdition } from '@/lib/edition';
 import { registerPushToken, checkBreaking, addNotificationTapListener } from '@/lib/notifications';
@@ -101,9 +102,14 @@ export default function RootLayout() {
         >
           <StoreProvider>
             <ThemeProvider>
-              <NavVisibilityProvider>
-                <ThemedStack />
-              </NavVisibilityProvider>
+              {/* Outside NavVisibility because nothing about an account moves
+                  the tab bar, and inside Store because signing in reads what
+                  this device has already done. */}
+              <AccountProvider>
+                <NavVisibilityProvider>
+                  <ThemedStack />
+                </NavVisibilityProvider>
+              </AccountProvider>
             </ThemeProvider>
           </StoreProvider>
         </PersistQueryClientProvider>
@@ -180,6 +186,8 @@ function ThemedStack() {
         <Stack.Screen name="search" options={{ animation: 'fade_from_bottom' }} />
         <Stack.Screen name="notifications" options={{ animation: 'slide_from_right' }} />
         <Stack.Screen name="settings" options={{ animation: 'slide_from_right' }} />
+        {/* Rises like a sheet, because it is an offer rather than a destination. */}
+        <Stack.Screen name="signin" options={{ animation: 'slide_from_bottom' }} />
       </Stack>
       {/* after <Stack> so it paints above the tab bar, which is absolutely
           positioned inside the tabs screen rather than in a portal */}

@@ -23,6 +23,7 @@ import { fetchByIds } from '@/lib/queries';
 import { UNCLASSIFIED } from '@/lib/categories';
 import { useStore } from '@/lib/store';
 import { useTheme } from '@/lib/theme';
+import { useAccount } from '@/lib/account';
 import { useProgress, useStreak, weekCounts } from '@/lib/progress';
 import { lastNDays, startOfLocalDay, dayKey } from '@/lib/day';
 import { useEditionProgress } from '@/lib/edition';
@@ -67,6 +68,13 @@ export default function Profile() {
   // which only ever went up and told the reader nothing they could act on.
   // Accuracy replaced it — it moves in both directions and it is earned.
   const personality = personalityOf(topTopics[0] ?? null);
+  const account = useAccount();
+  /* Was the literal string "Daily Reader" for everyone. An account has a name
+     of sorts — the part of the email before the @ — which is a small thing but
+     the difference between the app knowing who you are and not. */
+  const readerName = account.email
+    ? account.email.split('@')[0].replace(/[._-]+/g, ' ').replace(/\w/g, (m) => m.toUpperCase())
+    : 'Daily Reader';
   const maxWeek = Math.max(...week, 1);
   const accuracy = xp.lifetimeAsked > 0 ? Math.round((xp.lifetimeCorrect / xp.lifetimeAsked) * 100) : null;
 
@@ -155,7 +163,7 @@ export default function Profile() {
 
               <View style={{ marginLeft: 18, flex: 1 }}>
                 <Txt size={24} weight="extrabold" color="#fff" ls={-0.6}>
-                  Daily Reader
+                  {readerName}
                 </Txt>
                 <LinearGradient
                   colors={['rgba(102,148,255,0.3)', 'rgba(155,108,255,0.22)']}
@@ -171,6 +179,26 @@ export default function Profile() {
                 <Txt size={11.5} weight="medium" color="rgba(255,255,255,0.5)" style={{ marginTop: 9 }}>
                   {lvl.span - lvl.into} XP to level {lvl.level + 1}
                 </Txt>
+
+                {/* An offer, not a wall. Everything on this screen already
+                    works signed out; this only says where it goes if the phone
+                    is lost. */}
+                {!account.email ? (
+                  <Press
+                    haptic={false}
+                    onPress={() => {
+                      tick();
+                      router.push('/signin');
+                    }}
+                    scaleTo={0.97}
+                    style={s.signInPill}
+                  >
+                    <LIcon name="cloud" size={12} color="#fff" strokeWidth={2.4} />
+                    <Txt size={12} weight="bold" color="#fff">
+                      Save my reading
+                    </Txt>
+                  </Press>
+                ) : null}
               </View>
             </Animated.View>
 
@@ -625,6 +653,17 @@ const s = StyleSheet.create({
     justifyContent: 'center',
     borderWidth: 2,
     borderColor: '#0F1B36',
+  },
+  signInPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    alignSelf: 'flex-start',
+    marginTop: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 999,
+    backgroundColor: 'rgba(255,255,255,0.16)',
   },
   personaPill: {
     flexDirection: 'row',
