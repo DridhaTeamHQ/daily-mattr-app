@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "1001483009823",
+    "project_id": "daily-mattr",
+    "storage_bucket": "daily-mattr.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1001483009823:android:2c71f0bd9c0a47c5427a2a",
+        "android_client_info": {
+          "package_name": "com.dridha.dailymattr"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDYw97VAFoGnKyyq2hwb2ClgtkKSALc5lY"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

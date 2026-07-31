@@ -19,7 +19,8 @@
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
       "predictiveBackGestureEnabled": false,
-      "package": "com.dridha.dailymattr"
+      "package": "com.dridha.dailymattr",
+      "googleServicesFile": "./google-services.json"
     },
     "web": {
       "output": "single",

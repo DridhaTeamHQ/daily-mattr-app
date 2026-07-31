@@ -43,3 +43,9 @@ example
 # generated native folders
 /ios
 /android
+
+# Firebase service account keys — these sign push requests on behalf of the
+# project and must never be committed. google-services.json is deliberately NOT
+# listed: it holds only public identifiers and the Android build needs it.
+*-adminsdk-*.json
+firebase-service-account*.json
