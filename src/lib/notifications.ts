@@ -90,10 +90,25 @@ export async function registerPushToken(): Promise<void> {
     const ok = await ensurePermissions();
     if (!ok) return;
     if (Platform.OS === 'android') {
+      /* The channel the desk broadcasts on. Its id stays `breaking` because the
+         CMS sends that string and existing installs already have the channel —
+         Android keys off the id, and a new one would leave every phone that has
+         not updated receiving on a channel the app no longer configures.
+
+         Worth knowing when changing this: only `name` and `description` can be
+         edited after a channel exists. Importance, sound and lock-screen
+         visibility are frozen at creation, deliberately — they are the reader's
+         to change from that point, not ours. So the last two lines take effect
+         on fresh installs and are a no-op on upgrades. */
       await N.setNotificationChannelAsync('breaking', {
-        name: 'Breaking news',
+        name: 'Top stories',
+        description: 'The few stories the desk thinks are worth interrupting you for.',
         importance: N.AndroidImportance.HIGH,
         sound: 'default',
+        // A headline is public by definition; there is nothing here to hide
+        // behind "1 new notification" on the lock screen.
+        lockscreenVisibility: N.AndroidNotificationVisibility.PUBLIC,
+        lightColor: '#3979FF',
       });
     }
     const token = (await N.getExpoPushTokenAsync()).data;
