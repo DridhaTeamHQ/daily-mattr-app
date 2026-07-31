@@ -1,5 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
-import { type Article, cleanText } from './content';
+import { type Article, cleanText, mapModes } from './content';
 import { categoryOfSlug } from './categories';
 import { usableCover } from './media';
 
@@ -129,7 +129,13 @@ function mapContentItem(r: ContentRow): Article {
     // pipeline card quote read time on the same basis
     readMins: Math.max(1, Math.round(words / 220)),
     wordCount: words,
-    modes: points?.length ? { eli5: null, tldr: points, keyNumbers: null } : null,
+    /* A mode set the desk wrote, if there is one. Otherwise the Pix key
+       points stand in as a 60-second read — which is all this could ever
+       offer before, so a story with real modes now gets all three instead of
+       a tldr and nothing else. */
+    modes:
+      mapModes((r.body as Record<string, unknown> | null)?.modes) ??
+      (points?.length ? { eli5: null, tldr: points, keyNumbers: null } : null),
     /* The desk's own kinds map onto the three the app renders. `trax` is audio
        and has no slot yet, so it reads as a plain story rather than being
        dropped — a published trax should still be reachable, just not pretending
@@ -223,6 +229,13 @@ export type Selection = {
   titleOverride: string | null;
   summaryOverride: string | null;
   imageOverride: string | null;
+  /* Reading modes the desk wrote for a pipeline story.
+
+     DB A owns `articles.versions` and the CMS never writes it, so a mode
+     generated in the Studio lands here instead — the same mechanism as the
+     title and summary overrides beside it. Raw JSON: `mapModes` in lib/content
+     is the one place that knows the shape. */
+  modesOverride?: unknown;
 };
 
 /* A very short cache, and short on purpose.
@@ -254,7 +267,7 @@ export async function fetchSelections(): Promise<Map<string, Selection>> {
        would silently invert the desk's running order. */
     const { data, error } = await cms
       .from('article_selections')
-      .select('article_id,is_featured,approved_at,title_override,summary_override,image_override')
+      .select('article_id,is_featured,approved_at,title_override,summary_override,image_override,modes_override')
       .order('approved_at', { ascending: true, nullsFirst: false });
 
     if (error) {
@@ -271,6 +284,7 @@ export async function fetchSelections(): Promise<Map<string, Selection>> {
         titleOverride: r.title_override,
         summaryOverride: r.summary_override,
         imageOverride: r.image_override,
+        modesOverride: r.modes_override ?? null,
       });
     }
     cache = { at: Date.now(), rows };
@@ -299,15 +313,20 @@ export function applyOverride(a: Article, sel: Selection | undefined): Article {
   const summary = sel.summaryOverride?.trim() || a.summary;
   const imageUrl = sel.imageOverride?.trim() || a.imageUrl;
   const featured = sel.isFeatured;
+  /* Replaces rather than merges. A mode set is written and reviewed as a whole
+     in the Studio, so half the desk's version sitting on top of half the
+     summariser's would be a retelling neither of them wrote. */
+  const modes = mapModes(sel.modesOverride) ?? a.modes;
   if (
     title === a.title &&
     summary === a.summary &&
     imageUrl === a.imageUrl &&
-    featured === a.featured
+    featured === a.featured &&
+    modes === a.modes
   ) {
     return a;
   }
-  return { ...a, title, summary, imageUrl, featured };
+  return { ...a, title, summary, imageUrl, featured, modes };
 }
 
 /** Applies the desk's corrections across a list, fetching them once. */
