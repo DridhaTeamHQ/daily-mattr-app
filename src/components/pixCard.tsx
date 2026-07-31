@@ -4,14 +4,17 @@ import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
   Easing,
+  runOnJS,
   useAnimatedStyle,
   useSharedValue,
   withSequence,
+  withSpring,
   withTiming,
 } from 'react-native-reanimated';
-import { radius, topicOf, BLUR_MAX } from '@/theme';
+import { radius, spring, topicOf, BLUR_MAX } from '@/theme';
 import { useTheme } from '@/lib/theme';
 import { Txt, Press, LIcon, EasedScrim, BreakingBadge, FeaturedBadge } from './ui';
 import { CommentsPanel } from './commentsPanel';
@@ -27,6 +30,8 @@ import { tick, soft, save as saveHaptic } from '@/lib/haptics';
 import { enterChrome } from '@/lib/transitions';
 import { ImagePeek } from './imagePeek';
 
+/** Half the card, matching the video deck so the gesture means one thing. */
+const SHEET_RATIO = 0.56;
 const GUTTER = 24;
 
 /* A story told as two slides: the photo carrying the headline, then the same
@@ -103,6 +108,34 @@ function PixCardBase({
     },
     [W],
   );
+
+  /* Drag the sheet down to dismiss.
+
+     Bound to the sheet itself rather than the card: the comment list scrolls
+     inside it, so an unbounded pan would fight the scroll. activeOffsetY with
+     a positive-only threshold means only a downward drag claims the gesture,
+     and the list keeps everything else. */
+  const sheetY = useSharedValue(0);
+  const sheetDrag = useMemo(
+    () =>
+      Gesture.Pan()
+        .activeOffsetY([12, 999])
+        .failOffsetY([-8, 999])
+        .onUpdate((e) => {
+          sheetY.value = Math.max(0, e.translationY);
+        })
+        .onEnd((e) => {
+          // Distance or speed — a flick and a slow haul both mean the same thing.
+          if (e.translationY > 90 || e.velocityY > 900) {
+            runOnJS(setShowComments)(false);
+            sheetY.value = 0;
+          } else {
+            sheetY.value = withSpring(0, spring.snappy);
+          }
+        }),
+    [sheetY],
+  );
+  const sheetStyle = useAnimatedStyle(() => ({ transform: [{ translateY: sheetY.value }] }));
 
   const liked = useIsLiked(a.id);
   const disliked = useIsDisliked(a.id);
@@ -245,11 +278,52 @@ function PixCardBase({
           />
         </View>
 
-        {/* comments take the whole card rather than squeezing into a slide */}
+        {/* Half the card, like the video deck's.
+
+            It used to take the whole card, which meant opening comments hid
+            the story you were commenting on — and the only way back was the
+            × in the panel's own header. A sheet keeps the picture in view,
+            gives the backdrop as a second way out, and matches what the same
+            gesture does one tab away. */}
         {showComments ? (
-          <Animated.View entering={enterChrome()} style={[StyleSheet.absoluteFill, s.commentsWrap, { backgroundColor: isDark ? 'rgba(10,14,23,0.97)' : 'rgba(255,255,255,0.97)' }]}>
-            <CommentsPanel articleId={a.id} onClose={() => setShowComments(false)} />
-          </Animated.View>
+          <>
+            <Animated.View entering={enterChrome()} style={StyleSheet.absoluteFill}>
+              <Press
+                haptic={false}
+                scaleTo={1}
+                onPress={() => setShowComments(false)}
+                accessibilityRole="button"
+                accessibilityLabel="Close comments"
+                style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(4,6,12,0.45)' }]}
+              >
+                <View />
+              </Press>
+            </Animated.View>
+
+            <GestureDetector gesture={sheetDrag}>
+              <Animated.View
+                entering={enterChrome()}
+                style={[
+                  s.sheet,
+                  { height: H * SHEET_RATIO },
+                  sheetStyle,
+                  { backgroundColor: isDark ? 'rgba(6,9,16,0.98)' : 'rgba(255,255,255,0.98)' },
+                ]}
+              >
+                <View style={s.grabWrap}>
+                  <View
+                    style={[
+                      s.grab,
+                      { backgroundColor: isDark ? 'rgba(255,255,255,0.28)' : 'rgba(11,13,18,0.22)' },
+                    ]}
+                  />
+                </View>
+                <View style={{ flex: 1, paddingHorizontal: 16 }}>
+                  <CommentsPanel articleId={a.id} onClose={() => setShowComments(false)} />
+                </View>
+              </Animated.View>
+            </GestureDetector>
+          </>
         ) : null}
       </View>
 
@@ -642,5 +716,14 @@ const s = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  commentsWrap: { padding: 16, borderRadius: radius.lg },
+  sheet: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    borderTopLeftRadius: 22,
+    borderTopRightRadius: 22,
+  },
+  grabWrap: { alignItems: 'center', paddingTop: 9, paddingBottom: 3 },
+  grab: { width: 38, height: 4, borderRadius: 2 },
 });
