@@ -2,6 +2,7 @@ import { Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Device from 'expo-device';
 import { supabase } from './supabase';
+import { cms } from './cms';
 import { type Article } from './content';
 import { getDeviceId } from './telemetry';
 
@@ -97,13 +98,36 @@ export async function registerPushToken(): Promise<void> {
     }
     const token = (await N.getExpoPushTokenAsync()).data;
     const deviceId = await getDeviceId();
-    await supabase.rpc('app_register_push', {
-      p_device_id: deviceId,
-      p_token: token,
-      p_platform: Platform.OS,
-    });
+
+    /* Registered in both projects, because each answers a different question.
+       DB A has held tokens all along. But the thing that knows a story was
+       featured is the Studio, which lives in DB B and has no service-role
+       reach into DB A — so rather than bridge two projects with a new secret,
+       the token is written to both and each side reads its own.
+
+       Settled rather than awaited together: one project being unreachable
+       should not cost the registration in the other. */
+    const results = await Promise.allSettled([
+      supabase.rpc('app_register_push', {
+        p_device_id: deviceId,
+        p_token: token,
+        p_platform: Platform.OS,
+      }),
+      cms?.rpc('app_register_push_token', {
+        p_device: deviceId,
+        p_token: token,
+        p_platform: Platform.OS,
+      }) ?? Promise.resolve(null),
+    ]);
+
+    for (const r of results) {
+      if (r.status === 'rejected') console.warn('[push] register:', r.reason);
+    }
   } catch {
-    // missing project id etc. — remote push simply stays off
+    /* Almost always the absence of FCM credentials, which is a build-time fact
+       the reader can do nothing about: without them getExpoPushTokenAsync
+       throws and there is no token to register. Swallowed rather than surfaced
+       — a notification that cannot arrive is not an error the reader caused. */
   }
 }
 
