@@ -32,6 +32,7 @@ import { ensureEdition, hydrateEdition } from '@/lib/edition';
 import { registerPushToken, checkBreaking, addNotificationTapListener } from '@/lib/notifications';
 import { flush } from '@/lib/telemetry';
 import { ONBOARDED_KEY, setOnboardedFlag, subscribeOnboarded } from '@/lib/onboardingKey';
+import { LaunchIntro } from '@/components/launchIntro';
 import { startNetworkWatch } from '@/lib/network';
 import { AppErrorBoundary } from '@/components/errorBoundary';
 
@@ -123,6 +124,7 @@ function ThemedStack() {
   const router = useRouter();
   const segments = useSegments();
   const [onboarded, setOnboarded] = useState<boolean | null>(null);
+  const [intro, setIntro] = useState(true);
   const bootstrapped = useRef(false);
 
   useEffect(() => {
@@ -172,6 +174,10 @@ function ThemedStack() {
   return (
     <>
       <StatusBar style={isDark ? 'light' : 'dark'} />
+      {/* Over everything, on every launch, gating nothing. It removes itself
+          and never blocks navigation — the app underneath is already mounted
+          and already fetching while this plays. */}
+      {intro ? <LaunchIntro onDone={() => setIntro(false)} /> : null}
       {/* Declarative gate — safe during initial mount, unlike router.replace() */}
       {onboarded === false && segments[0] !== 'onboarding' ? <Redirect href="/onboarding" /> : null}
       <Stack

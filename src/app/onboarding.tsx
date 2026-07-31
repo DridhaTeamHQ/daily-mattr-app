@@ -39,9 +39,12 @@ import { artFor } from '@/lib/topicArt';
  * actually offering is a few quiet minutes with the world, and a picture says
  * that in less time than a tagline does.
  *
- * The hero is monochrome on purpose: the whole app is one blue on near-black,
- * and a colour photograph would be the loudest thing in it. It also means the
- * headline sits on the image without a scrim heavy enough to bury the picture.
+ * The hero is a city at dawn, monochrome, with nobody in it. A portrait was
+ * tried first and read as a lifestyle app — a face invites you to look at a
+ * person, and this one is meant to say "the world, this morning". Monochrome
+ * because the app is one blue on near-black and a colour photograph would be
+ * the loudest thing in it; it also lets the headline sit on the image without
+ * a scrim heavy enough to bury the picture.
  */
 
 const MIN_PICKS = 3;
@@ -328,8 +331,14 @@ function TopicTile({
     transform: [{ scale: 0.6 + on.value * 0.4 }],
   }));
 
+  /* Two views, not one.
+     An entering animation and an animated transform on the same component
+     fight over the same property — Reanimated warns that the layout animation
+     may overwrite the style, and it is right. The wrapper owns the entrance,
+     the inner view owns the selection scale. */
   return (
-    <Animated.View entering={enterItem(index, 46)} style={wrap}>
+    <Animated.View entering={enterItem(index, 46)}>
+      <Animated.View style={wrap}>
       <Press haptic={false} onPress={onPress} scaleTo={0.95}>
         <View style={[s.tile, { width: size, height: size, backgroundColor: c.card }]}>
           <Image source={artFor(name)} style={StyleSheet.absoluteFill} contentFit="cover" />
@@ -354,6 +363,7 @@ function TopicTile({
           </View>
         </View>
       </Press>
+      </Animated.View>
     </Animated.View>
   );
 }
