@@ -35,13 +35,20 @@ const AnimatedPolygon = Animated.createAnimatedComponent(Polygon);
 /** Rings behind the shape. Four reads as a grid without becoming a target. */
 const RINGS = 4;
 
-/** Polar → cartesian, starting at twelve o'clock and going clockwise. */
+/* Polar → cartesian, starting at twelve o'clock and going clockwise.
+ *
+ * Both of these are worklets because useAnimatedProps below runs on the UI
+ * thread and calls them every frame. Without the directive Reanimated treats
+ * them as remote functions and throws the moment the chart animates — which is
+ * immediately, since the entrance is the first thing it does. */
 function point(cx: number, cy: number, r: number, i: number, n: number) {
+  'worklet';
   const a = (Math.PI * 2 * i) / n - Math.PI / 2;
   return [cx + r * Math.cos(a), cy + r * Math.sin(a)] as const;
 }
 
 function polygon(values: number[], cx: number, cy: number, radius: number): string {
+  'worklet';
   return values
     .map((v, i) => {
       // A floor, so a category with nothing still has a vertex — otherwise the

@@ -11,11 +11,10 @@ import Animated, {
 import { LinearGradient } from 'expo-linear-gradient';
 import { Image } from 'expo-image';
 import Svg, { Circle } from 'react-native-svg';
-import { artFor } from '@/lib/topicArt';
 import * as Lucide from 'lucide-react-native';
 import { tick } from '@/lib/haptics';
 import { useMotionAllowed } from '@/lib/motion';
-import { colors, font, display, type, radius, spring, scrim } from '@/theme';
+import { colors, font, display, type, radius, spring, scrim, topicOf } from '@/theme';
 import { useTheme } from '@/lib/theme';
 import { enterReward } from '@/lib/transitions';
 
@@ -321,6 +320,7 @@ export function TopicBubble({
   label?: string;
 }) {
   const { c } = useTheme();
+  const t = topicOf(topic);
   const fontSize = Math.max(11.5, Math.min(15, size * 0.14));
   // Without a handler this must NOT be a Pressable — a nested pressable
   // swallows taps meant for an outer one.
@@ -341,8 +341,20 @@ export function TopicBubble({
           justifyContent: 'center',
         }}
       >
+        {/* Drawn, not rendered.
+
+            This was the bundled 3D glass artwork, and a wheel of eight glossy
+            trophies and atoms reads as a mobile game. theme.topicMeta already
+            gives every category a line icon and a two-stop gradient — the same
+            identity the cards and the reader use — so the dial now speaks the
+            app's own visual language instead of a generated one. */}
         <View style={{ width: size, height: size, borderRadius: size / 2, overflow: 'hidden' }}>
-          <Image source={artFor(topic)} style={{ width: '100%', height: '100%' }} contentFit="cover" transition={200} />
+          <LinearGradient
+            colors={t.grad}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, opacity: selected ? 1 : 0.55 }}
+          />
           <View
             style={{
               position: 'absolute',
@@ -350,12 +362,18 @@ export function TopicBubble({
               right: 0,
               top: 0,
               bottom: 0,
-              backgroundColor: selected ? 'rgba(6,10,20,0.28)' : 'rgba(6,10,20,0.44)',
               alignItems: 'center',
               justifyContent: 'center',
               paddingHorizontal: 8,
+              gap: 3,
             }}
           >
+            <LIcon
+              name={t.icon}
+              size={Math.round(size * 0.26)}
+              color="rgba(255,255,255,0.92)"
+              strokeWidth={1.6}
+            />
             <Txt size={fontSize} weight="bold" color="#fff" ls={-0.2} style={{ textAlign: 'center' }} numberOfLines={2}>
               {label ?? topic}
             </Txt>
