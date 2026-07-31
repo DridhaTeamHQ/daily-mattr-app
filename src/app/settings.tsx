@@ -14,12 +14,15 @@ import { clearAll as clearXp, useXp, levelOf } from '@/lib/xp';
 import { getMotionPref, setMotionPref, isSystemReduced, useMotionAllowed, type MotionPref } from '@/lib/motion';
 import { getNotifyEnabled, setNotifyEnabled } from '@/lib/notifications';
 import { useStore } from '@/lib/store';
+import { useAccount } from '@/lib/account';
+import { ONBOARDED_KEY, setOnboardedFlag } from '@/lib/onboardingKey';
 
 export default function Settings() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { c, isDark, toggle } = useTheme();
   const { clearAll } = useStore();
+  const account = useAccount();
   const xp = useXp();
   const [haptics, setHaptics] = useState(getHapticsEnabled());
   const [motionPref, setPref] = useState<MotionPref>(getMotionPref());
@@ -43,6 +46,33 @@ export default function Settings() {
       { text: 'Reset', style: 'destructive', onPress: onConfirm },
     ]);
   };
+
+  /* Re-pick interests.
+     Sends the reader back through the topic step rather than duplicating that
+     grid inside Settings — one picker, one place it is defined. Clearing the
+     flag is what makes onboarding show again; the tabs layout gates on it. */
+  const chooseTopicsAgain = () => {
+    tick();
+    setOnboardedFlag(false);
+    AsyncStorage.removeItem(ONBOARDED_KEY).catch(() => {});
+    router.replace('/onboarding');
+  };
+
+  const confirmSignOut = () =>
+    Alert.alert(
+      'Sign out?',
+      'Your saved stories, streak and reading stay on this phone. Signing out only stops them syncing to your account.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Sign out',
+          style: 'destructive',
+          onPress: () => {
+            account.signOut().catch(() => {});
+          },
+        },
+      ],
+    );
 
   const confirmClearLibrary = () =>
     confirm(
@@ -225,6 +255,30 @@ export default function Settings() {
               trackColor={{ true: c.brand }}
             />
           }
+        />
+
+        <Section>ACCOUNT</Section>
+        {account.email ? (
+          <>
+            <Row icon="user" label={account.email} hint="Signed in — your reading syncs to this account" />
+            <Row icon="log-out" label="Sign out" danger onPress={confirmSignOut} />
+          </>
+        ) : (
+          <Row
+            icon="cloud"
+            label="Save my reading"
+            hint="Keep your streak and library if you change phones"
+            onPress={() => {
+              tick();
+              router.push('/signin');
+            }}
+          />
+        )}
+        <Row
+          icon="layout-grid"
+          label="Choose my topics again"
+          hint="Re-pick the categories your feed leans towards"
+          onPress={chooseTopicsAgain}
         />
 
         <Section>DATA</Section>
