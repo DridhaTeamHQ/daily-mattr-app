@@ -1,39 +1,65 @@
 import type { Article } from './content';
 
-/* Personalisation, inside the desk's running order.
+/* Feed ranking.
  *
- * The app deliberately has no ranking pass: when it moved onto the CMS, the
- * old score-and-diversity machinery went with it, because that machinery
- * existed to impose order on thousands of scraped rows and the desk's running
- * order is now the answer to that question. Nothing here takes that back.
+ * What replaced what, and why:
  *
- * What this does is nudge. Every story keeps its approval position as its
- * starting point, and the reader's own behaviour moves it a bounded number of
- * places either way — a favourite category climbs a little, something already
- * read sinks, something explicitly disliked sinks further. The desk's sequence
- * is still legible in the result, the lead story is still the lead story, and
- * nothing is ever removed: a reader who scrolls far enough sees everything
- * that was approved.
+ * The first version was the desk's approval order, untouched. That was right
+ * when the question was "does the newsroom control the feed" and wrong as soon
+ * as the app had more than a day of content in it — approval order ascending
+ * means the oldest approved story leads, so a reader opening the app at 8am
+ * got yesterday morning first. For a news app that is the worst possible
+ * default.
  *
- * The bounds are the whole design. A free sort by affinity would bury a story
- * the desk put third under a fortnight of the reader's habits, which is the
- * behaviour the cutover was meant to end.
+ * The second was a bounded nudge: keep approval order, shift each story a few
+ * places on the reader's signals. It preserved editorial intent but inherited
+ * the same broken spine.
+ *
+ * This is a score. It follows the shape every news ranker converges on —
+ * Hacker News' (points / age^gravity), Reddit's log(votes) + age term,
+ * EdgeRank's affinity × weight × decay — which is: something that decays with
+ * age, something that says who this reader is, and something the editor can
+ * put a thumb on. Written additively rather than multiplicatively so a zero in
+ * one term cannot silently annihilate a story, which is the classic failure of
+ * the multiplicative form.
+ *
+ * What it deliberately does NOT use: global popularity. The engagement counts
+ * exist (CMS migration 10) but `content_stats` is readable only by the desk,
+ * and rightly — handing every reader a live table of what everyone else clicked
+ * is both a privacy question and the mechanism by which a feed collapses onto
+ * whatever is already winning. Personalisation here is built from what *this*
+ * device did, which never leaves it.
  */
 
-/** How far each signal moves a story, in list positions. */
-export const LIFT_FAVOURITE = 4;
-export const LIFT_SAVED_TOPIC = 2;
-export const DROP_READ = 8;
-export const DROP_DISLIKED = 14;
+// ── weights ────────────────────────────────────────────────────────────────
+//
+// Kept as named constants at one scale (roughly 0..1 each before weighting) so
+// the relative pull of each term is legible rather than buried in arithmetic.
+
+/** How fast news goes cold. A story is worth half as much after this long. */
+export const HALF_LIFE_HOURS = 9;
+/** Recency is the spine of a news feed, so it carries the most weight. */
+export const W_RECENCY = 1.0;
+/** The desk's thumb. Large enough to lead, not so large it pins junk forever. */
+export const W_FEATURED = 0.55;
+/** Reader said, or reader did. */
+export const W_FAVOURITE = 0.42;
+export const W_SAVED_TOPIC = 0.18;
+/** Seen it. Not hidden — a re-read is legitimate — but it steps aside. */
+export const P_READ = 0.75;
+/** Said no. Stronger than read, and deliberately not removal. */
+export const P_DISLIKED = 1.4;
+/** How many of one topic may run consecutively before one is held back. */
+export const MAX_TOPIC_RUN = 2;
 
 export type ReadSignals = {
   /** Stories already opened. Demoted, never hidden. */
   readIds: ReadonlySet<string>;
   /** Explicit thumbs-down. */
   dislikedIds: ReadonlySet<string>;
-  /** The reader's most-read categories. */
+  /** Most-read categories, or the ones chosen at onboarding. */
   favouriteTopics: ReadonlySet<string>;
-  /** Categories they have saved something from — a weaker, deliberate signal. */
+  /** Categories they have saved something from — weaker, but deliberate. */
   savedTopics: ReadonlySet<string>;
 };
 
@@ -44,44 +70,112 @@ export const NO_SIGNALS: ReadSignals = {
   savedTopics: new Set(),
 };
 
-/** How far this story moves from where the desk put it. Negative climbs. */
-export function displacement(a: Article, s: ReadSignals): number {
-  let d = 0;
-  if (s.favouriteTopics.has(a.topic)) d -= LIFT_FAVOURITE;
-  if (s.savedTopics.has(a.topic)) d -= LIFT_SAVED_TOPIC;
-  /* Read and disliked stack on purpose: a story they opened and then thumbed
-     down should sit below one they merely opened. */
-  if (s.readIds.has(a.id)) d += DROP_READ;
-  if (s.dislikedIds.has(a.id)) d += DROP_DISLIKED;
-  return d;
+/**
+ * 1 at publication, 0.5 after one half-life, approaching 0 thereafter.
+ *
+ * Exponential rather than Hacker News' `1/(age+2)^1.8`, because that curve is
+ * tuned for a ranking that is re-sorted continuously against new arrivals. This
+ * feed is a finite daily set, and an exponential gives a gentler shoulder in
+ * the first few hours — where most of a news app's stories actually live.
+ *
+ * Clamped at zero age: a clock skewed a few minutes into the future should not
+ * hand a story a score above everything else.
+ */
+export function freshness(publishedAt: string, now: number): number {
+  const t = Date.parse(publishedAt);
+  if (!Number.isFinite(t)) return 0.5; // undated: neither promoted nor buried
+  const ageHours = Math.max(0, (now - t) / 3_600_000);
+  return Math.pow(0.5, ageHours / HALF_LIFE_HOURS);
+}
+
+/** The score a story carries for this reader, at this moment. Higher leads. */
+export function scoreOf(a: Article, s: ReadSignals, now: number): number {
+  let score = W_RECENCY * freshness(a.publishedAt, now);
+
+  if (a.featured) score += W_FEATURED;
+  if (s.favouriteTopics.has(a.topic)) score += W_FAVOURITE;
+  if (s.savedTopics.has(a.topic)) score += W_SAVED_TOPIC;
+
+  /* Read and disliked stack: a story someone opened and then thumbed down
+     belongs below one they merely opened. */
+  if (s.readIds.has(a.id)) score -= P_READ;
+  if (s.dislikedIds.has(a.id)) score -= P_DISLIKED;
+
+  return score;
 }
 
 /**
- * Reorders a live feed around one reader, without overruling the desk.
+ * Breaks up runs of the same category without re-sorting.
  *
- * Always a permutation — same stories, same count. Featured stories are left
- * exactly where the desk put them: they are an editorial decision, and a lead
- * that moves because of what someone read last week is not a lead.
+ * A pure score sort clusters — six Politics stories filed within an hour of
+ * each other all score alike and arrive together, and the feed reads like one
+ * story told six times. This walks the sorted list and defers any story that
+ * would extend a run past `MAX_TOPIC_RUN`, taking the next different one
+ * instead. Deferred stories are not dropped; they land as soon as the run
+ * breaks, so the result is always a permutation.
  */
-export function personalise(list: Article[], s: ReadSignals): Article[] {
+export function breakUpRuns(list: Article[]): Article[] {
+  if (list.length < 3) return list;
+
+  const out: Article[] = [];
+  const held: Article[] = [];
+  const queue = [...list];
+  let lastTopic: string | null = null;
+  let run = 0;
+
+  const take = (a: Article) => {
+    run = a.topic === lastTopic ? run + 1 : 1;
+    lastTopic = a.topic;
+    out.push(a);
+  };
+
+  while (queue.length || held.length) {
+    // A held story goes back in the moment it no longer extends a run.
+    const readyIdx = held.findIndex((a) => !(a.topic === lastTopic && run >= MAX_TOPIC_RUN));
+    if (readyIdx !== -1) {
+      take(held.splice(readyIdx, 1)[0]);
+      continue;
+    }
+    if (!queue.length) {
+      // Nothing left but held stories that all extend the run — the feed is
+      // one topic. Emit them in order rather than looping forever.
+      take(held.shift()!);
+      continue;
+    }
+    const next = queue.shift()!;
+    if (next.topic === lastTopic && run >= MAX_TOPIC_RUN) held.push(next);
+    else take(next);
+  }
+
+  return out;
+}
+
+/**
+ * Ranks a live feed for one reader.
+ *
+ * Featured stories are pinned to the front rather than scored into it. A boost
+ * large enough to guarantee the lead would also be large enough to keep a
+ * two-day-old featured story above this morning's news; pinning says what the
+ * desk means without distorting everything below it.
+ *
+ * Always a permutation — same stories, same count. A ranker that can drop a
+ * story can silently un-publish one, and the desk would have no way of knowing.
+ */
+export function personalise(list: Article[], s: ReadSignals, now: number = Date.now()): Article[] {
   if (list.length < 2) return list;
 
   const featured: Article[] = [];
-  const rest: { a: Article; i: number }[] = [];
+  const rest: { a: Article; i: number; score: number }[] = [];
+
   list.forEach((a, i) => {
     if (a.featured) featured.push(a);
-    else rest.push({ a, i });
+    else rest.push({ a, i, score: scoreOf(a, s, now) });
   });
 
-  /* Sorted on `i + displacement` rather than on a score of its own, so the
-     approval position stays the dominant term and the signals only ever shift
-     a story within its neighbourhood. Ties fall back to `i`, which keeps the
-     sort stable and stops the tail of untouched stories reshuffling between
-     one refetch and the next. */
-  const ordered = rest
-    .map((r) => ({ ...r, at: r.i + displacement(r.a, s) }))
-    .sort((x, y) => x.at - y.at || x.i - y.i)
-    .map((r) => r.a);
+  /* Ties broken by the original position rather than left to the sort's own
+     stability, so two stories filed in the same minute keep the desk's order
+     between them and the feed does not reshuffle between refetches. */
+  rest.sort((x, y) => y.score - x.score || x.i - y.i);
 
-  return [...featured, ...ordered];
+  return [...featured, ...breakUpRuns(rest.map((r) => r.a))];
 }

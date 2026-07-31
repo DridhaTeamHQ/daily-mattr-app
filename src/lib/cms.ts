@@ -268,7 +268,13 @@ export async function fetchSelections(): Promise<Map<string, Selection>> {
     const { data, error } = await cms
       .from('article_selections')
       .select('article_id,is_featured,approved_at,title_override,summary_override,image_override,modes_override')
-      .order('approved_at', { ascending: true, nullsFirst: false });
+      /* Newest approved first.
+
+         This was ascending, which is what put the oldest approved story at the
+         top of a news app — open it at 8am and yesterday morning led. The feed
+         is re-ranked by lib/rank anyway, but the order arriving here is the
+         tie-break, and a tie-break that favours the oldest is the wrong one. */
+      .order('approved_at', { ascending: false, nullsFirst: false });
 
     if (error) {
       warnOnce('selections unavailable', error.message);

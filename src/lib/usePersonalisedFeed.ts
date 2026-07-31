@@ -75,8 +75,14 @@ export function usePersonalisedFeed(list: Article[]): Article[] {
 
   const snapshot = useMemo(() => live.current, [visit]);
 
+  /* `now` is pinned per visit, like the snapshot and like Home's time bands.
+     Reading Date.now() inside the sort would let a story cross a freshness
+     boundary between renders and move under the reader's thumb — the whole
+     reason this hook settles on focus instead of following the signals live. */
+  const now = useMemo(() => Date.now(), [visit]);
+
   /* Recomputes when the desk publishes something or the reader changes tab —
      both cases where the list is genuinely different and a settled order is
      expected. */
-  return useMemo(() => personalise(list, snapshot), [list, snapshot]);
+  return useMemo(() => personalise(list, snapshot, now), [list, snapshot, now]);
 }
