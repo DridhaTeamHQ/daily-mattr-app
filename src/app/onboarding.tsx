@@ -20,7 +20,7 @@ import Animated, {
   withSpring,
   withTiming,
 } from 'react-native-reanimated';
-import { radius, spring } from '@/theme';
+import { radius, spring, topicOf } from '@/theme';
 import { useTheme } from '@/lib/theme';
 import { useMotionAllowed } from '@/lib/motion';
 import { Txt, Press, LIcon } from '@/components/ui';
@@ -30,7 +30,6 @@ import { tick, soft } from '@/lib/haptics';
 import { ONBOARDED_KEY, setOnboardedFlag } from '@/lib/onboardingKey';
 import { enterContent, enterItem } from '@/lib/transitions';
 import { CATEGORY_NAMES, TOPICS_KEY } from '@/lib/categories';
-import { artFor } from '@/lib/topicArt';
 
 /* First run, in two beats.
  *
@@ -295,10 +294,15 @@ export default function Onboarding() {
 
 /* One category.
  *
- * The art is the app's own per-category illustration, already bundled and
- * already what a story without a photograph falls back to — so the picker
- * teaches the visual language the feed uses rather than inventing icons that
- * appear nowhere else. */
+ * Drawn, not rendered. This used to show the bundled 3D glass artwork, which
+ * on a grid of eight reads as a mobile game — eight glossy trophies and atoms
+ * competing for attention. A news app should look like it was designed rather
+ * than generated.
+ *
+ * So it uses what the app already defines per category in theme.topicMeta: a
+ * line icon and a two-stop gradient, the same identity the cards and the reader
+ * use. Nothing here is an image file.
+ */
 function TopicTile({
   name,
   size,
@@ -314,6 +318,7 @@ function TopicTile({
 }) {
   const { c } = useTheme();
   const motion = useMotionAllowed();
+  const t = topicOf(name);
   const on = useSharedValue(selected ? 1 : 0);
 
   useEffect(() => {
@@ -322,47 +327,60 @@ function TopicTile({
 
   // scale, never width or height: a layout animation here would reflow the
   // whole grid on every tap
-  const wrap = useAnimatedStyle(() => ({
-    transform: [{ scale: 1 + on.value * 0.03 }],
-  }));
+  const wrap = useAnimatedStyle(() => ({ transform: [{ scale: 1 + on.value * 0.03 }] }));
+  /* Unselected sits back rather than disappearing. At full strength all eight
+     gradients shout at once and nothing reads as chosen. */
+  const paint = useAnimatedStyle(() => ({ opacity: 0.42 + on.value * 0.58 }));
   const ring = useAnimatedStyle(() => ({ opacity: on.value }));
   const check = useAnimatedStyle(() => ({
     opacity: on.value,
     transform: [{ scale: 0.6 + on.value * 0.4 }],
   }));
 
-  /* Two views, not one.
-     An entering animation and an animated transform on the same component
-     fight over the same property — Reanimated warns that the layout animation
-     may overwrite the style, and it is right. The wrapper owns the entrance,
-     the inner view owns the selection scale. */
   return (
     <Animated.View entering={enterItem(index, 46)}>
       <Animated.View style={wrap}>
-      <Press haptic={false} onPress={onPress} scaleTo={0.95}>
-        <View style={[s.tile, { width: size, height: size, backgroundColor: c.card }]}>
-          <Image source={artFor(name)} style={StyleSheet.absoluteFill} contentFit="cover" />
-          <LinearGradient
-            colors={['rgba(7,9,15,0.05)', 'rgba(7,9,15,0.72)']}
-            style={StyleSheet.absoluteFill}
-          />
+        <Press haptic={false} onPress={onPress} scaleTo={0.95}>
+          <View style={[s.tile, { width: size, height: size, backgroundColor: c.card }]}>
+            <Animated.View style={[StyleSheet.absoluteFill, paint]}>
+              <LinearGradient
+                colors={t.grad}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={StyleSheet.absoluteFill}
+              />
+            </Animated.View>
 
-          <Animated.View
-            style={[StyleSheet.absoluteFill, ring, { borderRadius: radius.md, borderWidth: 2.5, borderColor: c.brand }]}
-            pointerEvents="none"
-          />
+            {/* Grounds the label without a second gradient fighting the first. */}
+            <LinearGradient
+              colors={['rgba(7,9,15,0)', 'rgba(7,9,15,0.42)']}
+              style={StyleSheet.absoluteFill}
+            />
 
-          <Animated.View style={[s.check, check, { backgroundColor: c.brand }]} pointerEvents="none">
-            <LIcon name="check" size={12} color="#fff" strokeWidth={3.2} />
-          </Animated.View>
+            <Animated.View
+              style={[
+                StyleSheet.absoluteFill,
+                ring,
+                { borderRadius: radius.md, borderWidth: 2.5, borderColor: '#fff' },
+              ]}
+              pointerEvents="none"
+            />
 
-          <View style={s.tileLabel}>
-            <Txt size={12.5} weight="bold" color="#fff" numberOfLines={2}>
-              {name}
-            </Txt>
+            <Animated.View style={[s.check, check]} pointerEvents="none">
+              <LIcon name="check" size={12} color={t.grad[1]} strokeWidth={3.2} />
+            </Animated.View>
+
+            <View style={s.tileIcon}>
+              <LIcon name={t.icon} size={Math.round(size * 0.3)} color="#fff" strokeWidth={1.6} />
+            </View>
+
+            <View style={s.tileLabel}>
+              <Txt size={12.5} weight="bold" color="#fff" numberOfLines={2}>
+                {name}
+              </Txt>
+            </View>
           </View>
-        </View>
-      </Press>
+        </Press>
       </Animated.View>
     </Animated.View>
   );
@@ -394,11 +412,13 @@ const s = StyleSheet.create({
     overflow: 'hidden',
     justifyContent: 'flex-end',
   },
+  tileIcon: { position: 'absolute', top: 10, left: 10 },
   tileLabel: { paddingHorizontal: 9, paddingBottom: 9 },
   check: {
     position: 'absolute',
     top: 8,
     right: 8,
+    backgroundColor: '#fff',
     width: 21,
     height: 21,
     borderRadius: 11,

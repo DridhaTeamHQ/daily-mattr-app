@@ -19,7 +19,8 @@ import { colors, radius, shadow, spring, topicOf, personalityOf } from '@/theme'
 import { Txt, Press, SectionHeader, LIcon, ProgressRing } from '@/components/ui';
 import { ArticleRow } from '@/components/cards';
 import { NAVBAR_CLEARANCE } from '@/components/navbar';
-import { fetchByIds } from '@/lib/queries';
+import { fetchByIds, fetchForYou, LIVE_QUERY } from '@/lib/queries';
+import { InterestRadar, toSlices } from '@/components/interestRadar';
 import { UNCLASSIFIED } from '@/lib/categories';
 import { useStore } from '@/lib/store';
 import { useTheme } from '@/lib/theme';
@@ -68,6 +69,26 @@ export default function Profile() {
   // which only ever went up and told the reader nothing they could act on.
   // Accuracy replaced it — it moves in both directions and it is earned.
   const personality = personalityOf(topTopics[0] ?? null);
+
+  /* The two series behind the radar.
+
+     "Read" is this device's own history. "Published" is the live feed, so the
+     comparison is against what was actually on offer — reading a lot of Sports
+     in a week with little Sports in it is a different fact from reading a lot
+     in a week full of it, and only the second series can tell them apart. */
+  const liveFeed = useQuery({ queryKey: ['forYou'], queryFn: fetchForYou, ...LIVE_QUERY });
+
+  const slices = useMemo(() => {
+    const read: Record<string, number> = {};
+    for (const h of history) read[h.topic] = (read[h.topic] ?? 0) + 1;
+    const available: Record<string, number> = {};
+    for (const a of liveFeed.data ?? []) available[a.topic] = (available[a.topic] ?? 0) + 1;
+    return toSlices(read, available);
+  }, [history, liveFeed.data]);
+
+  // Nothing read yet means a dot at the centre and eight labels around it,
+  // which teaches nobody anything. The card waits until there is a shape.
+  const hasShape = history.length >= 3;
   const account = useAccount();
   /* Was the literal string "Daily Reader" for everyone. An account has a name
      of sorts — the part of the email before the @ — which is a small thing but
@@ -256,6 +277,28 @@ export default function Profile() {
               <LIcon name="chevron-right" size={18} color={c.inkFaint} />
             </Press>
           </Animated.View>
+
+          {/* Where the reading actually goes */}
+          {hasShape ? (
+            <Animated.View entering={enterItem(1)}>
+              <View style={[s.card, cardTint(isDark), { marginTop: 14 }]}>
+                <View style={s.cardHead}>
+                  <Txt size={15} weight="bold">
+                    Your interests
+                  </Txt>
+                  <Txt size={12} weight="semibold" color={c.inkFaint}>
+                    {history.length} read
+                  </Txt>
+                </View>
+                <View style={{ marginTop: 6 }}>
+                  <InterestRadar slices={slices} />
+                </View>
+                <Txt size={11.5} lh={17} color={c.inkFaint} style={{ marginTop: 10 }}>
+                  The gap between the two shapes is what you are skipping.
+                </Txt>
+              </View>
+            </Animated.View>
+          ) : null}
 
           {/* This week */}
           <Animated.View entering={enterItem(1)}>
