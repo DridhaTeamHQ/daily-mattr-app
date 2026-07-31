@@ -30,6 +30,7 @@ import { tick, soft } from '@/lib/haptics';
 import { ONBOARDED_KEY, setOnboardedFlag } from '@/lib/onboardingKey';
 import { enterContent, enterItem } from '@/lib/transitions';
 import { CATEGORY_NAMES, TOPICS_KEY } from '@/lib/categories';
+import { artFor } from '@/lib/topicArt';
 
 /* First run, in two beats.
  *
@@ -294,14 +295,13 @@ export default function Onboarding() {
 
 /* One category.
  *
- * Drawn, not rendered. This used to show the bundled 3D glass artwork, which
- * on a grid of eight reads as a mobile game — eight glossy trophies and atoms
- * competing for attention. A news app should look like it was designed rather
- * than generated.
+ * A photograph per category, washed with that category's colour.
  *
- * So it uses what the app already defines per category in theme.topicMeta: a
- * line icon and a two-stop gradient, the same identity the cards and the reader
- * use. Nothing here is an image file.
+ * The artwork used to be 3D glass renders — glossy trophies and atoms that on
+ * a grid of eight read as a mobile game rather than a news app. The photographs
+ * behind these are editorial and monochrome, cut from the same cloth as the
+ * opening screen, so the colour wash is what distinguishes them rather than
+ * eight competing illustration styles.
  */
 function TopicTile({
   name,
@@ -343,10 +343,14 @@ function TopicTile({
         <Press haptic={false} onPress={onPress} scaleTo={0.95}>
           <View style={[s.tile, { width: size, height: size, backgroundColor: c.card }]}>
             <Animated.View style={[StyleSheet.absoluteFill, paint]}>
+              <Image source={artFor(name)} style={StyleSheet.absoluteFill} contentFit="cover" />
+              {/* The category's own colour, laid over the photograph at low
+                  strength — enough to tell eight monochrome frames apart at a
+                  glance, not enough to tint them into stickers. */}
               <LinearGradient
-                colors={t.grad}
+                colors={[t.grad[0] + '00', t.grad[1] + 'AA']}
                 start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
+                end={{ x: 0, y: 1 }}
                 style={StyleSheet.absoluteFill}
               />
             </Animated.View>
