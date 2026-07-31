@@ -1,5 +1,6 @@
 import React, { useMemo } from 'react';
 import { View, StyleSheet, Dimensions, useWindowDimensions } from 'react-native';
+import { Image } from 'expo-image';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { LinearGradient } from 'expo-linear-gradient';
 import Animated, {
@@ -206,11 +207,30 @@ function ArcBubble({
    reader screen draws the chosen one again for the bloom that plays over the
    deck. Two copies of a 92pt circle drifted apart the moment either was
    touched, and the bloom's whole job is to look like the same object. */
-const FORMAT_LOOK: Record<string, { grad: [string, string]; icon: string; label: string }> = {
-  pix: { grad: ['#9B6CFF', '#5B2BD9'], icon: 'images', label: 'Pix' },
+const FORMAT_LOOK: Record<
+  string,
+  { grad: [string, string]; icon: string; label: string; art: any }
+> = {
+  pix: {
+    grad: ['#9B6CFF', '#5B2BD9'],
+    icon: 'images',
+    label: 'Pix',
+    art: require('../../assets/images/topics/pix.webp'),
+  },
   // warm against Pix's violet, so the two format bubbles never read as the same
   // one glimpsed twice as the ring spins past
-  video: { grad: ['#FF7A59', '#E03E7A'], icon: 'circle-play', label: 'Video' },
+  video: {
+    grad: ['#FF7A59', '#E03E7A'],
+    icon: 'circle-play',
+    label: 'Video',
+    art: require('../../assets/images/topics/video.webp'),
+  },
+  foryou: {
+    grad: ['#4D88FF', '#16295C'],
+    icon: 'sparkles',
+    label: 'For You',
+    art: require('../../assets/images/topics/for-you.webp'),
+  },
 };
 
 export function FormatBubble({
@@ -220,19 +240,30 @@ export function FormatBubble({
   kind: 'foryou' | 'pix' | 'video';
   brand: string;
 }) {
-  const look = kind === 'foryou' ? null : FORMAT_LOOK[kind];
+  const look = FORMAT_LOOK[kind];
   return (
-    <LinearGradient
-      colors={look ? look.grad : [brand, brand]}
-      start={{ x: 0, y: 0 }}
-      end={{ x: 1, y: 1 }}
-      style={st.forYouBubble}
-    >
-      <LIcon name={look ? look.icon : 'sparkles'} size={20} color="#fff" strokeWidth={2.2} />
-      <Txt size={12} weight="bold" color="#fff" style={{ marginTop: 3 }}>
-        {look ? look.label : 'For You'}
-      </Txt>
-    </LinearGradient>
+    /* A photograph, like every other bubble in the ring.
+
+       These three were flat gradients while the eight categories carried
+       artwork, so they read as unfinished next to them — the wheel looked like
+       it was missing three images. Same treatment now: a monochrome frame with
+       the format's own colour laid over it, so it is still the colour that
+       tells them apart at a glance while the ring is spinning. */
+    <View style={st.forYouBubble}>
+      <Image source={look.art} style={StyleSheet.absoluteFill} contentFit="cover" />
+      <LinearGradient
+        colors={[look.grad[0] + 'B8', look.grad[1] + 'E0']}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        style={StyleSheet.absoluteFill}
+      />
+      <View style={st.formatInner}>
+        <LIcon name={look.icon} size={20} color="#fff" strokeWidth={2.2} />
+        <Txt size={12} weight="bold" color="#fff" style={{ marginTop: 3 }}>
+          {look.label}
+        </Txt>
+      </View>
+    </View>
   );
 }
 
@@ -241,8 +272,16 @@ const st = StyleSheet.create({
     width: 92,
     height: 92,
     borderRadius: 46,
+    overflow: 'hidden',
+    boxShadow: '0 10px 30px rgba(57,121,255,0.45)',
+  },
+  formatInner: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
     alignItems: 'center',
     justifyContent: 'center',
-    boxShadow: '0 10px 30px rgba(57,121,255,0.45)',
   },
 });
